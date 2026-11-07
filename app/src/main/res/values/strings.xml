@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">LearningHelper</string>
+    <string name="accessibility_service_label">LearningHelper focus blocker</string>
+    <string name="accessibility_service_description">Detects which app is opened so LearningHelper can block distracting apps during a focus session you started. No screen content is read or stored.</string>
+</resources>

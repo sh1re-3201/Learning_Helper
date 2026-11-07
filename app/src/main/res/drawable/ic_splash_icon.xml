@@ -1,0 +1,72 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="160dp"
+    android:height="160dp"
+    android:viewportWidth="160"
+    android:viewportHeight="160">
+
+    <!-- Academic Mortarboard Cap (Top) -->
+    <path
+        android:pathData="M56,58 C65,68 95,68 104,58 L104,64 C95,74 65,74 56,64 Z"
+        android:fillColor="#4338CA" />
+
+    <!-- Mortarboard Diamond Flat Top -->
+    <path
+        android:pathData="M80,36 L122,52 L80,68 L38,52 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="38"
+                android:startY="36"
+                android:endX="122"
+                android:endY="68"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#818CF8" />
+                <item android:offset="1.0" android:color="#6366F1" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Tassel Button & Cord -->
+    <path
+        android:pathData="M80,52 C65,55 50,61 47,72"
+        android:strokeWidth="2.8"
+        android:strokeColor="#F59E0B"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M47,72 L44,84 L51,84 L48,72 Z"
+        android:fillColor="#FBBF24" />
+    <path
+        android:pathData="M80,52m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0"
+        android:fillColor="#FDE68A" />
+
+    <!-- Security Lock Shackle -->
+    <path
+        android:pathData="M65,94 V79 C65,70.5 95,70.5 95,79 V94"
+        android:strokeWidth="6"
+        android:strokeColor="#E2E8F0"
+        android:strokeLineCap="round" />
+
+    <!-- Lock Body / Shield -->
+    <path
+        android:pathData="M55,90 H105 C108.3,90 111,92.7 111,96 V114 C111,120 80,129 80,129 C80,129 49,120 49,114 V96 C49,92.7 51.7,90 55,90 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="49"
+                android:startY="90"
+                android:endX="111"
+                android:endY="129"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#38BDF8" />
+                <item android:offset="1.0" android:color="#0284C7" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Inner Keyhole -->
+    <path
+        android:pathData="M80,102m-4.2,0a4.2,4.2 0,1 1,8.4 0a4.2,4.2 0,1 1,-8.4 0"
+        android:fillColor="#0F172A" />
+    <path
+        android:pathData="M78,104 L76.5,115 H83.5 L82,104 Z"
+        android:fillColor="#0F172A" />
+</vector>

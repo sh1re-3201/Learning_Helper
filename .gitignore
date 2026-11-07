@@ -1,0 +1,27 @@
+*.iml
+.gradle
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+AGENTS.md
+PLANS.md
+
+# Kotlin compiler build cache
+.kotlin/
+
+# Release APKs and build outputs
+app/release/
+*.apk
+
+# Local IDE target configuration
+.idea/deploymentTargetSelector.xml
+
+# keys
+*.jks
+*.keystrokes
+keystroke.properties
