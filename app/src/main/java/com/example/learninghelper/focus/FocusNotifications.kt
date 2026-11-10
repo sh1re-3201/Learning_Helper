@@ -95,7 +95,9 @@ object FocusNotifications {
     }
 
     fun showComplete(context: Context, session: FocusSession) {
-        if (!canPost(context)) return
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            return
+        }
         val minutes = session.durationMillis / 60_000L
         val notification = NotificationCompat.Builder(context, CHANNEL_EVENTS)
             .setSmallIcon(R.drawable.ic_stat_focus)
@@ -104,7 +106,10 @@ object FocusNotifications {
             .setAutoCancel(true)
             .setContentIntent(openAppIntent(context))
             .build()
-        NotificationManagerCompat.from(context).notify(ID_COMPLETE, notification)
+        try {
+            NotificationManagerCompat.from(context).notify(ID_COMPLETE, notification)
+        } catch (ignored: SecurityException) {
+        }
     }
 
     fun canPost(context: Context): Boolean =

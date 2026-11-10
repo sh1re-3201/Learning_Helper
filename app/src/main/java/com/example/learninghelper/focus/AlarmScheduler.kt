@@ -152,8 +152,14 @@ class AlarmReceiver : BroadcastReceiver() {
                     .addAction(R.drawable.ic_stat_focus, "Skip (20w reason)", pendingPre)
                     .build()
 
-                val nm = context.getSystemService(NotificationManager::class.java)
-                nm.notify(FocusNotifications.ID_PRE_SESSION, notif)
+                if (FocusNotifications.canPost(context)) {
+                    try {
+                        val nm = context.getSystemService(NotificationManager::class.java)
+                        nm.notify(FocusNotifications.ID_PRE_SESSION, notif)
+                    } catch (e: SecurityException) {
+                        Log.w("AlarmReceiver", "Notification permission missing", e)
+                    }
+                }
 
                 AlarmScheduler.scheduleNext(context)
             }
