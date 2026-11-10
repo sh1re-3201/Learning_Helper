@@ -17,7 +17,6 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.Chronometer
@@ -206,12 +205,7 @@ class FocusService : Service() {
             val layoutParams = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                } else {
-                    @Suppress("DEPRECATION")
-                    WindowManager.LayoutParams.TYPE_PHONE
-                },
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
@@ -221,9 +215,7 @@ class FocusService : Service() {
                 gravity = Gravity.TOP or Gravity.START
                 x = (68 * density).toInt()
                 y = (4 * density).toInt()
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-                }
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
             }
 
             try {
@@ -273,21 +265,10 @@ class FocusService : Service() {
 
     private fun triggerVibration() {
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager
-                vibratorManager?.defaultVibrator?.vibrate(
-                    android.os.VibrationEffect.createOneShot(300L, android.os.VibrationEffect.DEFAULT_AMPLITUDE)
-                )
-            } else {
-                @Suppress("DEPRECATION")
-                val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vibrator?.vibrate(android.os.VibrationEffect.createOneShot(300L, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
-                } else {
-                    @Suppress("DEPRECATION")
-                    vibrator?.vibrate(300L)
-                }
-            }
+            val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager
+            vibratorManager?.defaultVibrator?.vibrate(
+                android.os.VibrationEffect.createOneShot(300L, android.os.VibrationEffect.DEFAULT_AMPLITUDE)
+            )
         } catch (e: Exception) {
             Log.w(TAG, "Could not trigger vibration pulse", e)
         }
@@ -296,21 +277,10 @@ class FocusService : Service() {
     private fun triggerBreakArrivalVibration() {
         try {
             val pattern = longArrayOf(0, 400, 200, 400, 200, 400)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager
-                vm?.defaultVibrator?.vibrate(
-                    android.os.VibrationEffect.createWaveform(pattern, -1)
-                )
-            } else {
-                @Suppress("DEPRECATION")
-                val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vibrator?.vibrate(android.os.VibrationEffect.createWaveform(pattern, -1))
-                } else {
-                    @Suppress("DEPRECATION")
-                    vibrator?.vibrate(pattern, -1)
-                }
-            }
+            val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager
+            vm?.defaultVibrator?.vibrate(
+                android.os.VibrationEffect.createWaveform(pattern, -1)
+            )
         } catch (e: Exception) {
             Log.w(TAG, "Could not trigger break arrival vibration", e)
         }

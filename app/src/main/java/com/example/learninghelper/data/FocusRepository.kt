@@ -62,7 +62,6 @@ object FocusRepository {
     private const val KEY_EMERGENCY_DRAFT = "emergency_draft"
     private const val KEY_EMERGENCY_ELAPSED_SEC = "emergency_elapsed_sec"
     private const val KEY_EMERGENCY_SESSION_START = "emergency_session_start"
-    private const val KEY_BREAK_OVERLAY_Y_DP = "break_overlay_y_dp"
     private const val KEY_EARLY_ENDED_BREAKS = "session_early_ended_breaks"
 
     val DEFAULT_ALLOWLIST = setOf("com.whatsapp", "com.whatsapp.w4b", "com.android.settings")
@@ -100,9 +99,6 @@ object FocusRepository {
     private val _emergencyElapsedSeconds = MutableStateFlow(0)
     val emergencyElapsedSeconds: StateFlow<Int> = _emergencyElapsedSeconds.asStateFlow()
 
-    private val _breakOverlayYDp = MutableStateFlow(64)
-    val breakOverlayYDp: StateFlow<Int> = _breakOverlayYDp.asStateFlow()
-
     private val _grandfatheredCallPackage = MutableStateFlow<String?>(null)
     val grandfatheredCallPackage: StateFlow<String?> = _grandfatheredCallPackage.asStateFlow()
 
@@ -134,7 +130,6 @@ object FocusRepository {
         _allowlist.value = currentAllowlist
         _minWritingMinutes.value = prefs.getInt(KEY_MIN_WRITING_MINUTES, 3).coerceIn(1, 15)
         _alarmSoundUri.value = prefs.getString(KEY_ALARM_SOUND_URI, null)
-        _breakOverlayYDp.value = prefs.getInt(KEY_BREAK_OVERLAY_Y_DP, 64)
 
         _schedules.value = parseSchedulesJson(prefs.getString(KEY_SCHEDULES_JSON, "[]") ?: "[]")
         _skippedOccurrences.value = parseStringSetJson(prefs.getString(KEY_SKIPPED_OCCURRENCES_JSON, "[]") ?: "[]")
@@ -330,9 +325,6 @@ object FocusRepository {
     }
 
     @Synchronized
-    fun endRestTokenEarly(now: Long = System.currentTimeMillis()): Boolean = endBreakEarly(now)
-
-    @Synchronized
     fun saveEmergencyDraft(draftText: String, elapsedSeconds: Int) {
         val current = _session.value ?: return
         prefs.edit()
@@ -502,12 +494,6 @@ object FocusRepository {
         prefs.edit().putString(KEY_ALARM_SOUND_URI, uriString).apply()
         _alarmSoundUri.value = uriString
         return true
-    }
-
-    fun setBreakOverlayYDp(yDp: Int) {
-        val clean = yDp.coerceIn(16, 220)
-        prefs.edit().putInt(KEY_BREAK_OVERLAY_Y_DP, clean).apply()
-        _breakOverlayYDp.value = clean
     }
 
     @Synchronized

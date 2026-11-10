@@ -21,7 +21,6 @@ import com.example.learninghelper.data.FocusRepository
  */
 object ForegroundAppMonitor {
 
-    private const val TAG = "ForegroundAppMonitor"
     private const val CHECK_INTERVAL_MS = 400L
     private const val DEBOUNCE_MS = 400L
     private const val LOOKBACK_SWEEP_MS = 15 * 60_000L

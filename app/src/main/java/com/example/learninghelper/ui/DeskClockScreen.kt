@@ -59,7 +59,17 @@ fun DeskClockScreen(
     val activity = context as? Activity
 
     DisposableEffect(Unit) {
-        val originalOrientation = activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        val rawOrientation = activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        val originalOrientation = if (
+            rawOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE ||
+            rawOrientation == ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE ||
+            rawOrientation == ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE ||
+            rawOrientation == ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE
+        ) {
+            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        } else {
+            rawOrientation
+        }
         val window = activity?.window
         val originalBrightness = window?.attributes?.screenBrightness ?: -1f
 

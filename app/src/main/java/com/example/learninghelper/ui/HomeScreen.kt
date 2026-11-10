@@ -3,7 +3,6 @@ package com.example.learninghelper.ui
 import android.Manifest
 import android.app.TimePickerDialog
 import android.content.Context
-import android.text.format.DateFormat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -25,11 +24,8 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import com.example.learninghelper.data.FocusRepository
 import com.example.learninghelper.focus.*
 import kotlinx.coroutines.delay
-import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
-import java.time.ZoneId
-import java.util.Date
 
 @Composable
 fun HomeScreen(

@@ -201,7 +201,6 @@ object FocusPolicy {
     const val LONG_BREAK_DURATION_MINUTES = 30
     const val LONG_BREAK_THRESHOLD_MINUTES = 120
     const val LONG_BREAK_THRESHOLD_MILLIS = LONG_BREAK_THRESHOLD_MINUTES * 60_000L
-    val PRESET_DURATIONS_MINUTES = listOf(25, 50, 90, 120, 180)
     val PRESET_INTERVALS: List<Pair<Int, Int>> = listOf(
         50 to 0,   // Continuous (no scheduled breaks)
         25 to 5,   // Pomodoro 25 / 5

@@ -1,7 +1,6 @@
 package com.example.learninghelper.data
 
 import android.os.Environment
-import com.example.learninghelper.focus.FocusPolicy
 import com.example.learninghelper.focus.ScheduleType
 import com.example.learninghelper.focus.ScheduledItem
 import org.json.JSONArray
