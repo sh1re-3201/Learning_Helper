@@ -42,16 +42,22 @@ fun SettingsScreen(
         checkTick++
     }
 
-    val accessibilityOn = remember(checkTick) { Permissions.isAccessibilityServiceEnabled(context) }
+    val usageStatsOn = remember(checkTick) { Permissions.hasUsageStatsPermission(context) }
     val overlayOn = remember(checkTick) { Permissions.canDrawOverlays(context) }
     val notifListenerOn = remember(checkTick) { Permissions.isNotificationListenerEnabled(context) }
+    val allFilesOn = remember(checkTick) { Permissions.hasAllFilesAccess() }
     val batteryOptOn = remember(checkTick) { Permissions.isIgnoringBatteryOptimizations(context) }
 
     val ringtonePickerLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            val uri = result.data?.getParcelableExtra<Uri>(RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
+            val uri = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                result.data?.getParcelableExtra(RingtoneManager.EXTRA_RINGTONE_PICKED_URI, Uri::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                result.data?.getParcelableExtra<Uri>(RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
+            }
             FocusRepository.setAlarmSoundUri(uri?.toString())
         }
     }
@@ -87,10 +93,12 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.outline,
                 )
-                Text("$minWritingMinutes minutes", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                var sliderValue by remember(minWritingMinutes) { mutableFloatStateOf(minWritingMinutes.toFloat()) }
+                Text("${sliderValue.toInt()} minutes", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 Slider(
-                    value = minWritingMinutes.toFloat(),
-                    onValueChange = { FocusRepository.setMinWritingMinutes(it.toInt()) },
+                    value = sliderValue,
+                    onValueChange = { sliderValue = it },
+                    onValueChangeFinished = { FocusRepository.setMinWritingMinutes(sliderValue.toInt()) },
                     valueRange = 1f..15f,
                     steps = 13,
                     enabled = !isLocked,
@@ -134,10 +142,10 @@ fun SettingsScreen(
                 )
 
                 PermissionRow(
-                    name = "Accessibility Service",
+                    name = "Usage Access",
                     description = "Monitors foreground apps and blocks distractions",
-                    isGranted = accessibilityOn,
-                    onClick = { context.startActivity(Permissions.accessibilitySettingsIntent()) },
+                    isGranted = usageStatsOn,
+                    onClick = { context.startActivity(Permissions.usageAccessSettingsIntent(context)) },
                 )
                 PermissionRow(
                     name = "Overlay ('Appear on top')",
@@ -150,6 +158,12 @@ fun SettingsScreen(
                     description = "Silences non-call notifications during study",
                     isGranted = notifListenerOn,
                     onClick = { context.startActivity(Permissions.notificationListenerSettingsIntent()) },
+                )
+                PermissionRow(
+                    name = "All Files Access (Backup)",
+                    description = "Restores focus history and schedules after reinstallation",
+                    isGranted = allFilesOn,
+                    onClick = { context.startActivity(Permissions.allFilesAccessIntent(context)) },
                 )
                 PermissionRow(
                     name = "Battery Optimization Exemption",

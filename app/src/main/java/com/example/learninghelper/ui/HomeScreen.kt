@@ -69,9 +69,10 @@ fun HomeScreen(
     val effNow = FocusRepository.effectiveNow(now)
     val active = session?.takeIf { it.isActive(effNow) }
 
-    val accessibilityOn = remember(resumeTick) { Permissions.isAccessibilityServiceEnabled(context) }
+    val usageStatsOn = remember(resumeTick) { Permissions.hasUsageStatsPermission(context) }
     val overlayOn = remember(resumeTick) { Permissions.canDrawOverlays(context) }
     val notifListenerOn = remember(resumeTick) { Permissions.isNotificationListenerEnabled(context) }
+    val allFilesOn = remember(resumeTick) { Permissions.hasAllFilesAccess() }
     var notificationsOk by remember(resumeTick) { mutableStateOf(FocusNotifications.canPost(context)) }
 
     val notificationLauncher = rememberLauncherForActivityResult(
@@ -98,20 +99,20 @@ fun HomeScreen(
                     FocusService.triggerBreakAlert(context)
                     AlarmScheduler.scheduleNext(context)
                 },
-                onEndRestTokenEarly = {
+                onEndBreakEarly = {
                     AlarmPlayer.stop()
-                    FocusRepository.endRestTokenEarly(now)
+                    FocusRepository.endBreakEarly(now)
                     FocusService.start(context)
                     AlarmScheduler.scheduleNext(context)
                 },
             )
         } else {
-            if (!accessibilityOn) {
+            if (!usageStatsOn) {
                 SetupCard(
-                    title = "App Blocker Accessibility (Required)",
+                    title = "Usage Access Permission (Required)",
                     body = "Needed to detect and block distracting apps during your focus session.",
-                    action = "Enable in Settings",
-                    onAction = { context.startActivity(Permissions.accessibilitySettingsIntent()) },
+                    action = "Grant Usage Access",
+                    onAction = { context.startActivity(Permissions.usageAccessSettingsIntent(context)) },
                 )
             }
             if (!overlayOn) {
@@ -128,6 +129,14 @@ fun HomeScreen(
                     body = "Blocks notifications except phone calls during focus.",
                     action = "Enable Listener",
                     onAction = { context.startActivity(Permissions.notificationListenerSettingsIntent()) },
+                )
+            }
+            if (!allFilesOn) {
+                SetupCard(
+                    title = "Uninstall-Proof Backup (Recommended)",
+                    body = "Allows restoring your focus history and schedules even if the app is uninstalled.",
+                    action = "Grant Storage Access",
+                    onAction = { context.startActivity(Permissions.allFilesAccessIntent(context)) },
                 )
             }
             if (!notificationsOk) {
@@ -154,7 +163,7 @@ fun HomeScreen(
             }
 
             StartSessionCard(
-                enabled = accessibilityOn,
+                enabled = usageStatsOn && overlayOn,
                 onStartNow = { duration, work, breakMin, hasLongBreak ->
                     FocusRepository.startSession(duration, work, breakMin, now, hasLongBreak)
                     FocusService.start(context)
@@ -214,10 +223,36 @@ private fun ActiveSessionCard(
     onOpenDeskClock: () -> Unit,
     onOpenEmergencyExit: () -> Unit,
     onUseRestToken: () -> Unit,
-    onEndRestTokenEarly: () -> Unit,
+    onEndBreakEarly: () -> Unit,
 ) {
     val phase = session.currentPhase(effNow)
     val isBreak = phase == SessionPhase.BREAK
+    var showConfirmEndBreak by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isBreak) {
+        if (!isBreak) showConfirmEndBreak = false
+    }
+
+    if (showConfirmEndBreak) {
+        AlertDialog(
+            onDismissRequest = { showConfirmEndBreak = false },
+            title = { Text("End Break Early?") },
+            text = { Text("Are you sure you want to end your break now and lock back into Focus Mode immediately?") },
+            confirmButton = {
+                Button(onClick = {
+                    showConfirmEndBreak = false
+                    onEndBreakEarly()
+                }) {
+                    Text("Yes, Resume Work")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showConfirmEndBreak = false }) {
+                    Text("Keep Resting")
+                }
+            },
+        )
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -261,9 +296,9 @@ private fun ActiveSessionCard(
                     OutlinedButton(onClick = onUseRestToken) {
                         Text("Spend Rest Token (30m)")
                     }
-                } else if (session.isRestTokenBreak(effNow)) {
-                    OutlinedButton(onClick = onEndRestTokenEarly) {
-                        Text("Resume Work Early")
+                } else if (isBreak) {
+                    OutlinedButton(onClick = { showConfirmEndBreak = true }) {
+                        Text("End Break Early")
                     }
                 }
             }

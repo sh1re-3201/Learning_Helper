@@ -559,4 +559,82 @@ class FocusLogicTest {
         assertFalse(FocusPolicy.shouldBlock("com.samsung.android.dialer", session, now, allowlist, alwaysAllowed))
         assertFalse(FocusPolicy.shouldBlock("com.samsung.android.app.contacts", session, now, allowlist, alwaysAllowed))
     }
+
+    @Test
+    fun testEarlyBreakCompletionScheduledBreak() {
+        val now = 1_000_000L
+        // 120-min session with 50m work, 10m break (Break window is now+50m .. now+60m)
+        val session = FocusSession(
+            startAt = now,
+            endAt = now + 120 * 60_000L,
+            workMinutes = 50,
+            breakMinutes = 10,
+        )
+
+        val t52 = now + 52 * 60_000L
+        assertEquals(SessionPhase.BREAK, session.currentPhase(t52))
+        assertTrue(session.canEndBreakEarly(t52))
+
+        val resumed = session.withBreakEndedEarly(t52)
+        assertTrue(resumed.earlyEndedBreakStarts.contains(now + 50 * 60_000L))
+
+        // Immediately resumes WORK phase for the remainder of this scheduled break interval
+        val t53 = now + 53 * 60_000L
+        assertEquals(SessionPhase.WORK, resumed.currentPhase(t53))
+        assertEquals(resumed.endAt, resumed.phaseEndAt(t53))
+        assertEquals(now + 120 * 60_000L, resumed.endAt)
+
+        // Session in WORK phase cannot end break early
+        assertFalse(resumed.canEndBreakEarly(t53))
+        assertSame(resumed, resumed.withBreakEndedEarly(t53))
+    }
+
+    @Test
+    fun testEarlyBreakCompletionRestTokenBreak() {
+        val now = 1_000_000L
+        val session = FocusSession(
+            startAt = now,
+            endAt = now + 90 * 60_000L,
+            workMinutes = 90,
+            breakMinutes = 0,
+        )
+        val withRest = session.withRestTokenUsed(now + 10 * 60_000L)
+        val t20 = now + 20 * 60_000L
+
+        assertEquals(SessionPhase.BREAK, withRest.currentPhase(t20))
+        assertTrue(withRest.canEndBreakEarly(t20))
+
+        val resumed = withRest.withBreakEndedEarly(t20)
+        assertEquals(t20, resumed.restBreakEndAt)
+
+        val t21 = now + 21 * 60_000L
+        assertEquals(SessionPhase.WORK, resumed.currentPhase(t21))
+        assertEquals(now + 90 * 60_000L, resumed.endAt)
+    }
+
+    @Test
+    fun testEarlyBreakCompletionOverlappingRestAndScheduledBreak() {
+        val now = 1_000_000L
+        // 120-min session with 50m work, 10m break (Scheduled break is now+50m .. now+60m)
+        val session = FocusSession(
+            startAt = now,
+            endAt = now + 120 * 60_000L,
+            workMinutes = 50,
+            breakMinutes = 10,
+        )
+        // User triggers rest token at t=40m (spans 40m..70m, overlapping with scheduled 50..60m)
+        val withRest = session.withRestTokenUsed(now + 40 * 60_000L)
+        val t55 = now + 55 * 60_000L
+        assertTrue(withRest.isRestTokenBreak(t55))
+        assertEquals(SessionPhase.BREAK, withRest.currentPhase(t55))
+
+        // Ending break early at t=55m clears BOTH the rest break and the overlapping scheduled break window
+        val resumed = withRest.withBreakEndedEarly(t55)
+        assertEquals(t55, resumed.restBreakEndAt)
+        assertTrue(resumed.earlyEndedBreakStarts.contains(now + 50 * 60_000L))
+
+        // At t=56m, session must be in WORK phase
+        val t56 = now + 56 * 60_000L
+        assertEquals(SessionPhase.WORK, resumed.currentPhase(t56))
+    }
 }

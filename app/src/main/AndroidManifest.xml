@@ -13,6 +13,12 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
 
     <queries>
         <intent>
@@ -68,18 +74,6 @@
             android:taskAffinity=""
             android:theme="@style/Theme.LearningHelper" />
 
-        <service
-            android:name=".focus.BlockerAccessibilityService"
-            android:exported="true"
-            android:label="@string/accessibility_service_label"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/blocker_accessibility_config" />
-        </service>
 
         <service
             android:name=".focus.FocusNotificationListenerService"

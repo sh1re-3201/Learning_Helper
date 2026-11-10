@@ -63,6 +63,7 @@ object FocusRepository {
     private const val KEY_EMERGENCY_ELAPSED_SEC = "emergency_elapsed_sec"
     private const val KEY_EMERGENCY_SESSION_START = "emergency_session_start"
     private const val KEY_BREAK_OVERLAY_Y_DP = "break_overlay_y_dp"
+    private const val KEY_EARLY_ENDED_BREAKS = "session_early_ended_breaks"
 
     val DEFAULT_ALLOWLIST = setOf("com.whatsapp", "com.whatsapp.w4b", "com.android.settings")
 
@@ -150,6 +151,12 @@ object FocusRepository {
 
         restoreSession()
         reconcileReboot()
+
+        if (com.example.learninghelper.focus.Permissions.hasAllFilesAccess()) {
+            backupExecutor.execute {
+                syncWithExternalBackup(appContext)
+            }
+        }
     }
 
     private fun restoreSession() {
@@ -161,6 +168,12 @@ object FocusRepository {
             val hasLongBreak = prefs.getBoolean(KEY_HAS_LONG_BREAK, false)
             val restStart = prefs.getLong(KEY_REST_START, 0L)
             val restEnd = prefs.getLong(KEY_REST_END, 0L)
+            val earlyBreakStr = prefs.getString(KEY_EARLY_ENDED_BREAKS, "") ?: ""
+            val earlyBreaks = if (earlyBreakStr.isNotBlank()) {
+                earlyBreakStr.split(',').mapNotNull { it.trim().toLongOrNull() }.toSet()
+            } else {
+                emptySet()
+            }
             _session.value = FocusSession(
                 startAt = start,
                 endAt = end,
@@ -169,6 +182,7 @@ object FocusRepository {
                 restBreakStartAt = restStart,
                 restBreakEndAt = restEnd,
                 hasLongBreak = hasLongBreak,
+                earlyEndedBreakStarts = earlyBreaks,
             )
             val draftStart = prefs.getLong(KEY_EMERGENCY_SESSION_START, 0L)
             if (draftStart == start) {
@@ -278,6 +292,7 @@ object FocusRepository {
             .remove(KEY_EMERGENCY_DRAFT)
             .remove(KEY_EMERGENCY_ELAPSED_SEC)
             .putLong(KEY_EMERGENCY_SESSION_START, session.startAt)
+            .remove(KEY_EARLY_ENDED_BREAKS)
             .commit()
 
         _session.value = session
@@ -301,17 +316,21 @@ object FocusRepository {
     }
 
     @Synchronized
-    fun endRestTokenEarly(now: Long = System.currentTimeMillis()): Boolean {
+    fun endBreakEarly(now: Long = System.currentTimeMillis()): Boolean {
         val current = activeSession(now) ?: return false
         val effNow = effectiveNow(now)
-        if (!current.isRestTokenBreak(effNow)) return false
-        val updated = current.withRestTokenEndedEarly(effNow)
+        if (!current.canEndBreakEarly(effNow)) return false
+        val updated = current.withBreakEndedEarly(effNow)
         prefs.edit()
             .putLong(KEY_REST_END, updated.restBreakEndAt)
+            .putString(KEY_EARLY_ENDED_BREAKS, updated.earlyEndedBreakStarts.joinToString(","))
             .commit()
         _session.value = updated
         return true
     }
+
+    @Synchronized
+    fun endRestTokenEarly(now: Long = System.currentTimeMillis()): Boolean = endBreakEarly(now)
 
     @Synchronized
     fun saveEmergencyDraft(draftText: String, elapsedSeconds: Int) {
@@ -354,7 +373,21 @@ object FocusRepository {
         now: Long = System.currentTimeMillis(),
     ): Boolean {
         // Allows skipping prior to start or within the one-time +60s grace period extension
-        if (now > scheduledStartMillis + 60_000L || isFocusActive(now)) return false
+        if (now > scheduledStartMillis + 60_000L) return false
+
+        // If a session auto-started at T-0 while the user was actively typing a skip reason,
+        // clear that session and stop FocusService immediately.
+        if (isFocusActive(now)) {
+            val active = activeSession(now)
+            if (active != null && active.startAt == scheduledStartMillis) {
+                clearActiveSessionInternal()
+                if (::appContext.isInitialized) {
+                    com.example.learninghelper.focus.FocusService.stop(appContext)
+                }
+            } else {
+                return false
+            }
+        }
 
         val updatedSkips = _skippedOccurrences.value.toMutableSet().apply { add(occurrenceId) }
         saveSkippedOccurrences(updatedSkips)
@@ -404,6 +437,7 @@ object FocusRepository {
             .remove(KEY_EMERGENCY_DRAFT)
             .remove(KEY_EMERGENCY_ELAPSED_SEC)
             .remove(KEY_EMERGENCY_SESSION_START)
+            .remove(KEY_EARLY_ENDED_BREAKS)
             .commit()
         _session.value = null
         _emergencyDraftText.value = ""
@@ -430,6 +464,7 @@ object FocusRepository {
         }
         prefs.edit().putStringSet(KEY_ALLOWLIST, HashSet(updated)).apply()
         _allowlist.value = updated
+        triggerExternalBackup()
         return true
     }
 
@@ -457,6 +492,7 @@ object FocusRepository {
         val clean = minutes.coerceIn(1, 15)
         prefs.edit().putInt(KEY_MIN_WRITING_MINUTES, clean).apply()
         _minWritingMinutes.value = clean
+        triggerExternalBackup()
         return true
     }
 
@@ -494,18 +530,107 @@ object FocusRepository {
             it.type == HistoryType.SKIPPED && (now - it.timestamp) > SEVEN_DAYS_MILLIS
         }
         val updated = (listOf(entry) + cleaned).take(200)
-        prefs.edit().putString(KEY_HISTORY_JSON, serializeHistoryJson(updated)).commit()
+        prefs.edit().putString(KEY_HISTORY_JSON, serializeHistoryJson(updated)).apply()
         _history.value = updated
+        triggerExternalBackup()
     }
 
     private fun saveSchedules(items: List<ScheduledItem>) {
-        prefs.edit().putString(KEY_SCHEDULES_JSON, serializeSchedulesJson(items)).commit()
+        prefs.edit().putString(KEY_SCHEDULES_JSON, serializeSchedulesJson(items)).apply()
         _schedules.value = items
+        triggerExternalBackup()
     }
 
     private fun saveSkippedOccurrences(items: Set<String>) {
-        prefs.edit().putString(KEY_SKIPPED_OCCURRENCES_JSON, serializeStringSet(items)).commit()
+        prefs.edit().putString(KEY_SKIPPED_OCCURRENCES_JSON, serializeStringSet(items)).apply()
         _skippedOccurrences.value = items
+        triggerExternalBackup()
+    }
+
+    private val backupExecutor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor()
+    private var pendingBackupTask: java.util.concurrent.ScheduledFuture<*>? = null
+
+    fun triggerExternalBackup(debounceMs: Long = 500L) {
+        if (!::appContext.isInitialized) return
+        if (!com.example.learninghelper.focus.Permissions.hasAllFilesAccess()) return
+        synchronized(this) {
+            pendingBackupTask?.cancel(false)
+            pendingBackupTask = backupExecutor.schedule({
+                val snapshot = BackupSnapshot(
+                    schemaVersion = 1,
+                    updatedAt = System.currentTimeMillis(),
+                    schedules = _schedules.value,
+                    history = _history.value,
+                    skippedOccurrences = _skippedOccurrences.value,
+                    allowlist = _allowlist.value,
+                    minWritingMinutes = _minWritingMinutes.value,
+                )
+                ExternalBackupStorage.exportBackup(snapshot)
+            }, debounceMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+        }
+    }
+
+    @Synchronized
+    fun syncWithExternalBackup(context: Context) {
+        init(context)
+        if (!com.example.learninghelper.focus.Permissions.hasAllFilesAccess()) return
+        val backup = ExternalBackupStorage.readBackup() ?: run {
+            triggerExternalBackup(0L)
+            return
+        }
+
+        // Restore custom minWritingMinutes if not yet customized in local prefs
+        if (!prefs.contains(KEY_MIN_WRITING_MINUTES) && backup.minWritingMinutes != _minWritingMinutes.value) {
+            _minWritingMinutes.value = backup.minWritingMinutes
+            prefs.edit().putInt(KEY_MIN_WRITING_MINUTES, backup.minWritingMinutes).apply()
+        }
+
+        // Merge schedules: keep local by ID, append missing backup schedules
+        val localSchedules = _schedules.value.toMutableList()
+        val localSchedIds = localSchedules.map { it.id }.toSet()
+        var schedChanged = false
+        for (sched in backup.schedules) {
+            if (sched.id !in localSchedIds) {
+                localSchedules.add(sched)
+                schedChanged = true
+            }
+        }
+        if (schedChanged) {
+            prefs.edit().putString(KEY_SCHEDULES_JSON, serializeSchedulesJson(localSchedules)).apply()
+            _schedules.value = localSchedules
+        }
+
+        // Merge history: deduplicate by ID, sort descending by timestamp, cap at 200
+        val localHist = _history.value.toMutableList()
+        val localHistIds = localHist.map { it.id }.toSet()
+        var histChanged = false
+        for (entry in backup.history) {
+            if (entry.id !in localHistIds) {
+                localHist.add(entry)
+                histChanged = true
+            }
+        }
+        if (histChanged) {
+            val mergedHist = localHist.sortedByDescending { it.timestamp }.take(200)
+            prefs.edit().putString(KEY_HISTORY_JSON, serializeHistoryJson(mergedHist)).apply()
+            _history.value = mergedHist
+        }
+
+        // Merge skipped occurrences
+        val mergedSkips = (_skippedOccurrences.value + backup.skippedOccurrences)
+        if (mergedSkips.size != _skippedOccurrences.value.size) {
+            prefs.edit().putString(KEY_SKIPPED_OCCURRENCES_JSON, serializeStringSet(mergedSkips)).apply()
+            _skippedOccurrences.value = mergedSkips
+        }
+
+        // Merge allowlist ensuring DEFAULT_ALLOWLIST remains intact
+        val mergedAllowlist = (_allowlist.value + backup.allowlist + DEFAULT_ALLOWLIST).toMutableSet()
+        if (mergedAllowlist.size != _allowlist.value.size) {
+            prefs.edit().putStringSet(KEY_ALLOWLIST, HashSet(mergedAllowlist)).apply()
+            _allowlist.value = mergedAllowlist
+        }
+
+        triggerExternalBackup(0L)
     }
 
     private fun serializeSchedulesJson(items: List<ScheduledItem>): String {
