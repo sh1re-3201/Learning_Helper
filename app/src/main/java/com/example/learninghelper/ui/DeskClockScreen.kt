@@ -14,8 +14,10 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,6 +36,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import com.example.learninghelper.data.FocusRepository
 import com.example.learninghelper.focus.AlarmPlayer
+import com.example.learninghelper.focus.AlarmScheduler
 import com.example.learninghelper.focus.FocusNotificationListenerService
 import com.example.learninghelper.focus.FocusService
 import com.example.learninghelper.focus.SessionPhase
@@ -56,7 +59,17 @@ fun DeskClockScreen(
     val activity = context as? Activity
 
     DisposableEffect(Unit) {
-        val originalOrientation = activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        val rawOrientation = activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        val originalOrientation = if (
+            rawOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE ||
+            rawOrientation == ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE ||
+            rawOrientation == ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE ||
+            rawOrientation == ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE
+        ) {
+            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        } else {
+            rawOrientation
+        }
         val window = activity?.window
         val originalBrightness = window?.attributes?.screenBrightness ?: -1f
 
@@ -104,6 +117,7 @@ fun DeskClockScreen(
     var pixelShiftX by remember { mutableIntStateOf(0) }
     var pixelShiftY by remember { mutableIntStateOf(0) }
     var showControls by remember { mutableStateOf(false) }
+    var showConfirmEndBreak by remember { mutableStateOf(false) }
 
     var isStarted by remember { mutableStateOf(false) }
     LifecycleEventEffect(Lifecycle.Event.ON_START) { isStarted = true }
@@ -135,6 +149,10 @@ fun DeskClockScreen(
     val effNow = FocusRepository.effectiveNow(wallNow)
     val active = session?.takeIf { it.isActive(effNow) }
     val isBreak = active != null && active.currentPhase(effNow) == SessionPhase.BREAK
+
+    LaunchedEffect(isBreak) {
+        if (!isBreak) showConfirmEndBreak = false
+    }
 
     LaunchedEffect(active?.phaseEndAt(effNow)) {
         val endAt = active?.phaseEndAt(effNow) ?: return@LaunchedEffect
@@ -232,18 +250,56 @@ fun DeskClockScreen(
             }
         }
 
-        if (showControls) {
-            Button(
-                onClick = {
-                    AlarmPlayer.stop()
-                    onExit()
+        if (showConfirmEndBreak) {
+            AlertDialog(
+                onDismissRequest = { showConfirmEndBreak = false },
+                title = { Text("End Break Early?") },
+                text = { Text("Are you sure you want to end your break now and lock back into Focus Mode immediately?") },
+                confirmButton = {
+                    Button(onClick = {
+                        showConfirmEndBreak = false
+                        showControls = false
+                        AlarmPlayer.stop()
+                        FocusRepository.endBreakEarly(System.currentTimeMillis())
+                        FocusService.start(context)
+                        AlarmScheduler.scheduleNext(context)
+                        phaseTick = System.currentTimeMillis()
+                    }) {
+                        Text("Yes, Resume Work")
+                    }
                 },
+                dismissButton = {
+                    OutlinedButton(onClick = { showConfirmEndBreak = false }) {
+                        Text("Keep Resting")
+                    }
+                },
+            )
+        }
+
+        if (showControls) {
+            Row(
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(24.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0x66334155)),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text("Exit Desk Clock", color = Color.White)
+                Button(
+                    onClick = {
+                        AlarmPlayer.stop()
+                        onExit()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0x66334155)),
+                ) {
+                    Text("Exit Desk Clock", color = Color.White)
+                }
+                if (isBreak) {
+                    Button(
+                        onClick = { showConfirmEndBreak = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0x99B45309)),
+                    ) {
+                        Text("End Break Early", color = Color.White)
+                    }
+                }
             }
         }
     }

@@ -17,7 +17,6 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.Chronometer
@@ -44,10 +43,12 @@ class FocusService : Service() {
                 Intent.ACTION_SCREEN_OFF -> {
                     isScreenOn = false
                     chronometer?.stop()
+                    ForegroundAppMonitor.onScreenOff()
                 }
                 Intent.ACTION_SCREEN_ON -> {
                     isScreenOn = true
-                    updateBreakOverlayChronometer()
+                    checkSession()
+                    context?.let { ForegroundAppMonitor.onScreenOn(it) }
                 }
             }
         }
@@ -94,6 +95,7 @@ class FocusService : Service() {
         }
 
         val forceBreakAlert = intent?.action == ACTION_TRIGGER_BREAK_ALERT
+        ForegroundAppMonitor.start(this)
         evaluatePhase(session, forceBreakAlert = forceBreakAlert)
         return START_STICKY
     }
@@ -119,7 +121,7 @@ class FocusService : Service() {
         } else {
             removeBreakOverlay()
             FocusNotificationListenerService.sweepDistractions()
-            BlockerAccessibilityService.enforceCurrentWindows()
+            ForegroundAppMonitor.enforceCurrentWindows(this)
         }
 
         // Keep ongoing notification updated with current phase, chronometer base, and alarm action
@@ -154,13 +156,17 @@ class FocusService : Service() {
                 FocusNotifications.showComplete(this, completed)
             }
             removeBreakOverlay()
+            ForegroundAppMonitor.stop()
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
     }
 
     private fun showOrUpdateBreakOverlay(session: FocusSession, effNow: Long) {
-        if (!Permissions.canDrawOverlays(this)) return
+        if (!Permissions.canDrawOverlays(this)) {
+            removeBreakOverlay()
+            return
+        }
 
         if (overlayView == null) {
             windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
@@ -169,26 +175,27 @@ class FocusService : Service() {
             val container = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                val padH = (12 * density).toInt()
-                val padV = (6 * density).toInt()
+                val padH = (8 * density).toInt()
+                val padV = (2 * density).toInt()
                 setPadding(padH, padV, padH, padV)
                 background = GradientDrawable().apply {
-                    setColor(Color.parseColor("#B30F172A")) // Translucent 70% slate
-                    cornerRadius = 20 * density
-                    setStroke((1 * density).toInt(), Color.parseColor("#475569"))
+                    setColor(Color.parseColor("#E6059669")) // Emerald green 90%
+                    cornerRadius = 12 * density
                 }
             }
 
             val icon = TextView(this).apply {
                 text = "☕ "
-                textSize = 14f
+                textSize = 11f
+                setTypeface(null, android.graphics.Typeface.BOLD)
                 setTextColor(Color.WHITE)
             }
             container.addView(icon)
             statusTextView = icon
 
             val chrono = Chronometer(this).apply {
-                textSize = 14f
+                textSize = 11f
+                setTypeface(null, android.graphics.Typeface.BOLD)
                 setTextColor(Color.WHITE)
                 isCountDown = true
             }
@@ -198,18 +205,17 @@ class FocusService : Service() {
             val layoutParams = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                } else {
-                    @Suppress("DEPRECATION")
-                    WindowManager.LayoutParams.TYPE_PHONE
-                },
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT,
             ).apply {
-                gravity = Gravity.BOTTOM or Gravity.START
-                x = (16 * density).toInt()
-                y = (64 * density).toInt()
+                gravity = Gravity.TOP or Gravity.START
+                x = (68 * density).toInt()
+                y = (4 * density).toInt()
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
             }
 
             try {
@@ -217,6 +223,11 @@ class FocusService : Service() {
                 overlayView = container
             } catch (e: Exception) {
                 Log.w(TAG, "Could not add break overlay", e)
+                chronometer?.stop()
+                chronometer = null
+                statusTextView = null
+                overlayView = null
+                return
             }
         }
 
@@ -235,12 +246,11 @@ class FocusService : Service() {
         }
         val density = resources.displayMetrics.density
         (overlayView as? LinearLayout)?.background = GradientDrawable().apply {
-            setColor(if (isTenSecWarning) Color.parseColor("#CCB45309") else Color.parseColor("#B30F172A"))
-            cornerRadius = 20 * density
-            setStroke((1 * density).toInt(), if (isTenSecWarning) Color.parseColor("#F59E0B") else Color.parseColor("#475569"))
+            setColor(if (isTenSecWarning) Color.parseColor("#E6D97706") else Color.parseColor("#E6059669"))
+            cornerRadius = 12 * density
         }
 
-        statusTextView?.text = if (isTenSecWarning) "🔒 Locking in " else "☕ "
+        statusTextView?.text = if (isTenSecWarning) "🔒 " else "☕ "
 
         if (isTenSecWarning && !didVibrateWarning) {
             didVibrateWarning = true
@@ -255,21 +265,10 @@ class FocusService : Service() {
 
     private fun triggerVibration() {
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager
-                vibratorManager?.defaultVibrator?.vibrate(
-                    android.os.VibrationEffect.createOneShot(300L, android.os.VibrationEffect.DEFAULT_AMPLITUDE)
-                )
-            } else {
-                @Suppress("DEPRECATION")
-                val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vibrator?.vibrate(android.os.VibrationEffect.createOneShot(300L, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
-                } else {
-                    @Suppress("DEPRECATION")
-                    vibrator?.vibrate(300L)
-                }
-            }
+            val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager
+            vibratorManager?.defaultVibrator?.vibrate(
+                android.os.VibrationEffect.createOneShot(300L, android.os.VibrationEffect.DEFAULT_AMPLITUDE)
+            )
         } catch (e: Exception) {
             Log.w(TAG, "Could not trigger vibration pulse", e)
         }
@@ -278,27 +277,17 @@ class FocusService : Service() {
     private fun triggerBreakArrivalVibration() {
         try {
             val pattern = longArrayOf(0, 400, 200, 400, 200, 400)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager
-                vm?.defaultVibrator?.vibrate(
-                    android.os.VibrationEffect.createWaveform(pattern, -1)
-                )
-            } else {
-                @Suppress("DEPRECATION")
-                val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vibrator?.vibrate(android.os.VibrationEffect.createWaveform(pattern, -1))
-                } else {
-                    @Suppress("DEPRECATION")
-                    vibrator?.vibrate(pattern, -1)
-                }
-            }
+            val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager
+            vm?.defaultVibrator?.vibrate(
+                android.os.VibrationEffect.createWaveform(pattern, -1)
+            )
         } catch (e: Exception) {
             Log.w(TAG, "Could not trigger break arrival vibration", e)
         }
     }
 
     private fun removeBreakOverlay() {
+        chronometer?.stop()
         overlayView?.let {
             try {
                 windowManager?.removeView(it)
@@ -315,6 +304,7 @@ class FocusService : Service() {
         handler.removeCallbacks(checkRunnable)
         AlarmPlayer.stop()
         removeBreakOverlay()
+        ForegroundAppMonitor.stop()
         super.onDestroy()
     }
 

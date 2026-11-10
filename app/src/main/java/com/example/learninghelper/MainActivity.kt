@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import com.example.learninghelper.data.FocusRepository
 import com.example.learninghelper.focus.AlarmScheduler
@@ -20,72 +19,72 @@ import com.example.learninghelper.ui.theme.LearningHelperTheme
 class MainActivity : ComponentActivity() {
 
     private var resumeTick by mutableIntStateOf(0)
-    private var initialScreen by mutableIntStateOf(SCREEN_HOME)
-    private var navTrigger by mutableLongStateOf(0L)
+    private var currentScreen by mutableIntStateOf(SCREEN_HOME)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        handleIntent(intent)
+        if (savedInstanceState != null) {
+            currentScreen = savedInstanceState.getInt(KEY_SCREEN, SCREEN_HOME)
+        } else {
+            handleIntent(intent)
+        }
 
         setContent {
             LearningHelperTheme {
-                var screen by rememberSaveable { mutableIntStateOf(initialScreen) }
-
-                LaunchedEffect(navTrigger) {
-                    if (navTrigger > 0L) {
-                        screen = initialScreen
-                    }
-                }
-
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     val contentModifier = Modifier
                         .fillMaxSize()
                         .padding(innerPadding)
 
-                    when (screen) {
+                    when (currentScreen) {
                         SCREEN_ALLOWLIST -> AllowlistScreen(
-                            onBack = { screen = SCREEN_HOME },
+                            onBack = { currentScreen = SCREEN_HOME },
                             modifier = contentModifier,
                         )
                         SCREEN_SCHEDULE -> ScheduleScreen(
-                            onBack = { screen = SCREEN_HOME },
+                            onBack = { currentScreen = SCREEN_HOME },
                             modifier = contentModifier,
                         )
                         SCREEN_HISTORY -> HistoryScreen(
-                            onBack = { screen = SCREEN_HOME },
+                            onBack = { currentScreen = SCREEN_HOME },
                             modifier = contentModifier,
                         )
                         SCREEN_SETTINGS -> SettingsScreen(
-                            onBack = { screen = SCREEN_HOME },
+                            onBack = { currentScreen = SCREEN_HOME },
                             modifier = contentModifier,
                         )
                         SCREEN_DESK_CLOCK -> DeskClockScreen(
-                            onExit = { screen = SCREEN_HOME },
+                            onExit = { currentScreen = SCREEN_HOME },
                             modifier = contentModifier,
                         )
                         SCREEN_EMERGENCY_EXIT -> EmergencyExitScreen(
                             onExitSuccess = {
                                 FocusService.stop(this@MainActivity)
-                                screen = SCREEN_HOME
+                                currentScreen = SCREEN_HOME
                             },
-                            onCancel = { screen = SCREEN_HOME },
+                            onCancel = { currentScreen = SCREEN_HOME },
                             modifier = contentModifier,
                         )
                         else -> HomeScreen(
                             resumeTick = resumeTick,
-                            onOpenAllowlist = { screen = SCREEN_ALLOWLIST },
-                            onOpenSchedule = { screen = SCREEN_SCHEDULE },
-                            onOpenHistory = { screen = SCREEN_HISTORY },
-                            onOpenSettings = { screen = SCREEN_SETTINGS },
-                            onOpenDeskClock = { screen = SCREEN_DESK_CLOCK },
-                            onOpenEmergencyExit = { screen = SCREEN_EMERGENCY_EXIT },
+                            onOpenAllowlist = { currentScreen = SCREEN_ALLOWLIST },
+                            onOpenSchedule = { currentScreen = SCREEN_SCHEDULE },
+                            onOpenHistory = { currentScreen = SCREEN_HISTORY },
+                            onOpenSettings = { currentScreen = SCREEN_SETTINGS },
+                            onOpenDeskClock = { currentScreen = SCREEN_DESK_CLOCK },
+                            onOpenEmergencyExit = { currentScreen = SCREEN_EMERGENCY_EXIT },
                             modifier = contentModifier,
                         )
                     }
                 }
             }
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt(KEY_SCREEN, currentScreen)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -97,8 +96,8 @@ class MainActivity : ComponentActivity() {
     private fun handleIntent(intent: Intent?) {
         val targetScreen = intent?.getIntExtra(EXTRA_SCREEN, -1) ?: -1
         if (targetScreen in SCREEN_HOME..SCREEN_EMERGENCY_EXIT) {
-            initialScreen = targetScreen
-            navTrigger = System.currentTimeMillis()
+            currentScreen = targetScreen
+            intent?.removeExtra(EXTRA_SCREEN)
         }
     }
 
@@ -115,6 +114,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_SCREEN = "extra_screen"
+        private const val KEY_SCREEN = "key_current_screen"
         const val SCREEN_HOME = 0
         const val SCREEN_ALLOWLIST = 1
         const val SCREEN_SCHEDULE = 2

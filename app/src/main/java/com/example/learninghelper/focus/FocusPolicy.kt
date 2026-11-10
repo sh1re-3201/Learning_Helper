@@ -22,6 +22,7 @@ data class FocusSession(
     val restBreakStartAt: Long = 0L,
     val restBreakEndAt: Long = 0L,
     val hasLongBreak: Boolean = false,
+    val earlyEndedBreakStarts: Set<Long> = emptySet(),
 ) {
     init {
         require(endAt > startAt) { "endAt must be after startAt" }
@@ -63,11 +64,31 @@ data class FocusSession(
         return copy(restBreakStartAt = clampedNow, restBreakEndAt = breakEnd)
     }
 
-    fun withRestTokenEndedEarly(now: Long): FocusSession {
-        if (!isRestTokenBreak(now)) return this
-        val endedAt = now.coerceAtLeast(restBreakStartAt + 1L)
-        return copy(restBreakEndAt = endedAt)
+    fun canEndBreakEarly(now: Long): Boolean =
+        isActive(now) && currentPhase(now) == SessionPhase.BREAK
+
+    fun withBreakEndedEarly(now: Long): FocusSession {
+        if (!canEndBreakEarly(now)) return this
+        val currentSched = breakWindows.firstOrNull { (bStart, bEnd) ->
+            bStart !in earlyEndedBreakStarts && now in bStart until bEnd
+        }
+        val newEarlyBreaks = if (currentSched != null) {
+            earlyEndedBreakStarts + currentSched.first
+        } else {
+            earlyEndedBreakStarts
+        }
+        val newRestEnd = if (isRestTokenBreak(now)) {
+            now.coerceAtLeast(restBreakStartAt + 1L)
+        } else {
+            restBreakEndAt
+        }
+        return copy(
+            restBreakEndAt = newRestEnd,
+            earlyEndedBreakStarts = newEarlyBreaks,
+        )
     }
+
+    fun withRestTokenEndedEarly(now: Long): FocusSession = withBreakEndedEarly(now)
 
     fun currentPhase(now: Long): SessionPhase {
         if (!isActive(now)) return SessionPhase.WORK
@@ -84,7 +105,7 @@ data class FocusSession(
             return minOf(breakEnd, endAt)
         }
         // Currently in WORK: find when the next valid scheduled break starts, if any.
-        val nextBreak = breakWindows.firstOrNull { (bStart, _) -> bStart > now }
+        val nextBreak = breakWindows.firstOrNull { (bStart, _) -> bStart > now && bStart !in earlyEndedBreakStarts }
         return nextBreak?.first ?: endAt
     }
 
@@ -92,7 +113,9 @@ data class FocusSession(
         (phaseEndAt(now) - now.coerceAtLeast(startAt)).coerceAtLeast(0L)
 
     private fun scheduledBreakWindowAt(now: Long): Pair<Long, Long>? =
-        breakWindows.firstOrNull { (bStart, bEnd) -> now in bStart until bEnd }
+        breakWindows.firstOrNull { (bStart, bEnd) ->
+            bStart !in earlyEndedBreakStarts && now in bStart until bEnd
+        }
 
     private fun computeBreakWindows(): List<Pair<Long, Long>> {
         val longBreakActive = hasLongBreak && durationMillis > FocusPolicy.LONG_BREAK_THRESHOLD_MILLIS
@@ -178,7 +201,6 @@ object FocusPolicy {
     const val LONG_BREAK_DURATION_MINUTES = 30
     const val LONG_BREAK_THRESHOLD_MINUTES = 120
     const val LONG_BREAK_THRESHOLD_MILLIS = LONG_BREAK_THRESHOLD_MINUTES * 60_000L
-    val PRESET_DURATIONS_MINUTES = listOf(25, 50, 90, 120, 180)
     val PRESET_INTERVALS: List<Pair<Int, Int>> = listOf(
         50 to 0,   // Continuous (no scheduled breaks)
         25 to 5,   // Pomodoro 25 / 5

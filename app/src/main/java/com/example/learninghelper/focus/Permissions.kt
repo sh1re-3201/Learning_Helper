@@ -1,26 +1,53 @@
 package com.example.learninghelper.focus
 
-import android.app.NotificationManager
+import android.app.AppOpsManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Environment
 import android.os.PowerManager
+import android.os.Process
 import android.provider.Settings
 
 object Permissions {
 
-    fun isAccessibilityServiceEnabled(context: Context): Boolean {
-        val expected = ComponentName(context, BlockerAccessibilityService::class.java)
-        val enabled = Settings.Secure.getString(
-            context.contentResolver,
-            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
-        ) ?: return false
-        return enabled.split(':').any { ComponentName.unflattenFromString(it) == expected }
+    fun hasUsageStatsPermission(context: Context): Boolean {
+        val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager ?: return false
+        @Suppress("DEPRECATION")
+        val mode = appOps.unsafeCheckOpNoThrow(
+            AppOpsManager.OPSTR_GET_USAGE_STATS,
+            Process.myUid(),
+            context.packageName,
+        )
+        return mode == AppOpsManager.MODE_ALLOWED
     }
 
-    fun accessibilitySettingsIntent(): Intent =
-        Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    fun usageAccessSettingsIntent(context: Context): Intent {
+        val packageUriIntent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
+            data = Uri.parse("package:${context.packageName}")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return if (packageUriIntent.resolveActivity(context.packageManager) != null) {
+            packageUriIntent
+        } else {
+            Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+    }
+
+    fun hasAllFilesAccess(): Boolean = Environment.isExternalStorageManager()
+
+    fun allFilesAccessIntent(context: Context): Intent {
+        val packageUriIntent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+            data = Uri.parse("package:${context.packageName}")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return if (packageUriIntent.resolveActivity(context.packageManager) != null) {
+            packageUriIntent
+        } else {
+            Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+    }
 
     fun canDrawOverlays(context: Context): Boolean =
         Settings.canDrawOverlays(context)

@@ -15,7 +15,9 @@ Installed directly via sideloading / Android Studio, **LearningHelper** eliminat
 
 ## 🌟 Key Features
 
-### 1. 🔒 Strict Focus Lock & App Blocker
+### 1. 🔒 Strict Focus Lock & App Blocker (Banking App Friendly)
+- **Zero Accessibility Services (`UsageStatsManager`):** App monitoring is powered by Android's official `UsageStatsManager` (`PACKAGE_USAGE_STATS`) instead of an Accessibility Service (`BIND_ACCESSIBILITY_SERVICE`). This completely eliminates mobile banking app security warnings and RASP (Runtime Application Self-Protection) blocks, allowing financial and banking apps to operate normally on your device.
+- **Zero Screen-Off / Idle CPU:** [`ForegroundAppMonitor`](file:///D:/Projects/LearningHelper/app/src/main/java/com/example/learninghelper/focus/ForegroundAppMonitor.kt) runs on a dedicated background `HandlerThread`, pauses polling on `ACTION_SCREEN_OFF` (strictly 0% idle CPU), and caches the current foreground package to eliminate repeated queries.
 - **Instant Full-Screen Interception (`BlockActivity`):** Distracting applications are immediately blocked during active focus blocks with a motivational full-screen overlay.
 - **Allowed Apps Quota (5-App Optional Pool):** Choose up to 5 custom applications (e.g., PDF readers, reference tools, note-taking apps) outside focus blocks.
 - **Always Unblocked Essentials:** Incoming/outgoing phone calls (`com.samsung.android.dialer`, Contacts, active dialer), Samsung Clock (for dismissable system alarms), core System UI (Quick Settings panel), keyboards, and default messaging apps (WhatsApp) consume **0 quota**.
@@ -39,8 +41,9 @@ Installed directly via sideloading / Android Studio, **LearningHelper** eliminat
 
 ### 4. ☕ Scheduled Breaks & Per-Session Rest Token
 - **Normal Phone Access during Breaks:** Scheduled intervals temporarily unblock user apps while keeping anti-tampering packages (Device Care, Play Store) locked.
-- **Floating HUD Countdown Pill:** Displays a non-interactive, touch-pass-through countdown pill (`FLAG_NOT_TOUCHABLE`) using a native `Chronometer`. At 10 seconds remaining, the pill pulses amber with a haptic vibration cue before re-locking.
-- **1-per-Session Rest Token:** Grants one unscheduled **30-minute break** per session without shifting the final session end time. Can be resumed early at any point.
+- **Top Status-Bar Countdown Capsule:** Displays a non-interactive, touch-pass-through countdown pill (`FLAG_NOT_TOUCHABLE`) using a native `Chronometer` pinned into the top status bar (`x = 68dp, y = 4dp`). At 10 seconds remaining, the pill pulses amber with a haptic vibration cue before re-locking.
+- **Early Break Resumption:** During any break (scheduled or Rest Token), users can resume work early at any point via a confirmation dialog, with automatic dialog dismissal if the break timer expires.
+- **1-per-Session Rest Token:** Grants one unscheduled **30-minute break** per session without shifting the final session end time.
 - **Audible Break Arrival Alert:** Sounds a 15-second alarm with a distinctive 3-pulse vibration pattern when entering break time.
 
 ### 5. 🕒 AMOLED Landscape Desk Clock (`DeskClockScreen`)
@@ -54,6 +57,11 @@ Installed directly via sideloading / Android Studio, **LearningHelper** eliminat
 - **Unrestricted Quick Settings:** The top notification tray (`com.android.systemui`) is never blocked—Wi-Fi, Bluetooth, sound toggles, and flashlight remain accessible.
 - **Notification Sweeping (`FocusNotificationListenerService`):** During `WORK` blocks, distraction notifications from non-allowlisted apps are dismissed.
 - **Emergency VoIP & Call Continuity:** Incoming/ongoing telephony and VoIP calls (WhatsApp, Zoom, Teams, Meet) are always preserved. Calls active when entering work mode are grandfathered until concluded.
+
+### 7. 💾 Uninstall-Proof Resilient Storage (`ExternalBackupStorage`)
+- **Automatic Local JSON Backup:** Automatically mirrors schedules, history, preferences, and allowlists to `/Documents/LearningHelper/learning_helper_backup.json` (`MANAGE_EXTERNAL_STORAGE`).
+- **Atomic Writes & Safe Parsing:** Writes atomically via temporary files (`.tmp`) with corruption recovery and backward-compatible versioned schema (`schemaVersion: 1`).
+- **Reinstallation Recovery:** Data is preserved even if the application is uninstalled or app storage is cleared.
 
 ---
 
@@ -71,6 +79,11 @@ Installed directly via sideloading / Android Studio, **LearningHelper** eliminat
 - Core domain logic (`FocusPolicy`, `EssayValidator`, `ScheduleCalculator`) has **zero imports** from `android.*` or `org.json.*`.
 - Everything compiles and executes directly in fast JVM unit tests (`testDebugUnitTest`) without Android mocks.
 
+### Zero Accessibility Services (Banking & RASP Compatible)
+- **No `BIND_ACCESSIBILITY_SERVICE`:** LearningHelper does **not** declare or register as an accessibility service.
+- **Fintech & Banking Ready:** Eliminates security restrictions, anti-malware warnings, and RASP defenses in banking, payment, and enterprise apps.
+- **Official Usage Access:** App detection is handled via Android's sanctioned `UsageStatsManager` (`PACKAGE_USAGE_STATS`) API.
+
 ---
 
 ## 🏗️ Project Architecture
@@ -84,20 +97,21 @@ app/src/main/
 │   ├── BlockActivity.kt              # Full-screen lock overlay shown over blocked apps
 │   ├── PreSessionActivity.kt         # Superimposed T-2m countdown (Mute / Proceed / 20w Skip)
 │   ├── data/
-│   │   └── FocusRepository.kt        # Local offline storage + monotonic clock anchor + JSON history
+│   │   ├── FocusRepository.kt        # Local offline storage + monotonic clock anchor + JSON history
+│   │   └── ExternalBackupStorage.kt  # Resilient atomic backup to /Documents/LearningHelper/
 │   ├── focus/
-│   │   ├── FocusPolicy.kt            # Pure Kotlin: session phases, tail rules, block policies
+│   │   ├── FocusPolicy.kt            # Pure Kotlin: session phases, tail rules, early break exit
 │   │   ├── EssayValidator.kt         # Pure Kotlin: Roman-alphabet anti-spam & entropy pipeline
 │   │   ├── ScheduleCalculator.kt     # Pure Kotlin: next milestone calculation (T-5m, T-2m, T-0)
 │   │   ├── AlarmScheduler.kt         # AlarmReceiver & auto-stop AlarmPlayer
 │   │   ├── AlarmSchedulerManager.kt  # Exact alarm chaining via AlarmManager
 │   │   ├── AppCatalog.kt             # Cached app metadata, allowlists, and blocklists
-│   │   ├── BlockerAccessibilityService.kt # Foreground & multi-window detection
+│   │   ├── ForegroundAppMonitor.kt   # Frugal UsageStatsManager foreground detector on HandlerThread
 │   │   ├── FocusNotificationListenerService.kt # Distraction notification suppressor
-│   │   ├── FocusService.kt           # Foreground service + Chronometer break overlay
+│   │   ├── FocusService.kt           # Foreground service + top status-bar Chronometer break pill
 │   │   ├── FocusNotifications.kt     # Notification channels & ongoing countdown builders
 │   │   ├── BootReceiver.kt           # Session restoration & monotonic clock reconciliation on boot
-│   │   └── Permissions.kt            # Accessibility, overlay, notification, and battery helpers
+│   │   └── Permissions.kt            # Usage access, all files access, overlay, notification, and battery helpers
 │   └── ui/
 │       ├── HomeScreen.kt             # Dashboard, interval selectors, active countdown, setup cards
 │       ├── AllowlistScreen.kt        # Allowed apps selector with 5-app quota & Essentials quick-filter
@@ -119,6 +133,15 @@ app/src/main/
 - **Android Studio** (Koala / Ladybug or newer)
 - **Android SDK:** Compile & Target SDK `37`, Minimum SDK `33` (Android 13+)
 - **Target Device:** Samsung Galaxy phone running One UI (Android 13–16)
+
+### Required System Permissions
+1. **Usage Access (`PACKAGE_USAGE_STATS`):** Official Android API for foreground application detection.
+2. **All Files Access (`MANAGE_EXTERNAL_STORAGE`):** For uninstall-proof atomic local backup in `/Documents/LearningHelper/`.
+3. **Appear on Top (`SYSTEM_ALERT_WINDOW`):** For the full-screen lock screen and top status-bar countdown pill.
+4. **Notification Listener (`NotificationListenerService`):** Suppresses non-allowlisted distraction notifications during study blocks.
+5. **Exact Alarms & Full Screen Intent:** Ensures pre-session warning alarms and overlays fire on time.
+> [!NOTE]
+> **No Accessibility Service is required or used.**
 
 ### Windows PowerShell Build Instructions
 `java` may not be in your default system `PATH`. Set `JAVA_HOME` to Android Studio's bundled JetBrains Runtime (JBR):

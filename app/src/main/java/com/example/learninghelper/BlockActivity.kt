@@ -138,9 +138,11 @@ private fun BlockScreen(
 
     val effNow = FocusRepository.effectiveNow(now)
     val active = session?.takeIf { it.isActive(effNow) }
+    val schedules by FocusRepository.schedules.collectAsState()
+    val skippedOccurrences by FocusRepository.skippedOccurrences.collectAsState()
     val inPreSession = ScheduleCalculator.isInPreSessionLockWindow(
-        items = FocusRepository.schedules.value,
-        skippedOccurrenceIds = FocusRepository.skippedOccurrences.value,
+        items = schedules,
+        skippedOccurrenceIds = skippedOccurrences,
         nowMillis = now,
     )
     val shouldStayBlocked = active != null || inPreSession
@@ -205,7 +207,7 @@ private fun BlockScreen(
             )
         } else if (inPreSession) {
             Text(
-                "Focus begins in < 5 minutes.\nSystem Settings & Device Care are locked.",
+                "Focus begins in < 5 minutes.\nDevice Care & App Stores are locked.",
                 color = Color(0xFFF59E0B),
                 fontSize = 15.sp,
                 textAlign = TextAlign.Center,

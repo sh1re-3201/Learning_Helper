@@ -187,7 +187,7 @@ class AlarmReceiver : BroadcastReceiver() {
                 if (occurrenceId !in FocusRepository.skippedOccurrences.value) {
                     FocusRepository.startSession(durationMin, workMin, breakMin, hasLongBreak = hasLongBreak)
                     FocusService.start(context)
-                    BlockerAccessibilityService.instance?.enforceCurrentWindows()
+                    ForegroundAppMonitor.enforceCurrentWindows(context)
                 }
                 AlarmScheduler.scheduleNext(context)
             }
