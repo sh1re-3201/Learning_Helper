@@ -185,7 +185,7 @@ class FocusService : Service() {
             }
 
             val icon = TextView(this).apply {
-                text = "☕ "
+                text = "Break "
                 textSize = 11f
                 setTypeface(null, android.graphics.Typeface.BOLD)
                 setTextColor(Color.WHITE)
@@ -250,7 +250,7 @@ class FocusService : Service() {
             cornerRadius = 12 * density
         }
 
-        statusTextView?.text = if (isTenSecWarning) "🔒 " else "☕ "
+        statusTextView?.text = if (isTenSecWarning) "Locks in " else "Break "
 
         if (isTenSecWarning && !didVibrateWarning) {
             didVibrateWarning = true

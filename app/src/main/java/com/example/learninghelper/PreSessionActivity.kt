@@ -197,7 +197,7 @@ fun PreSessionScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Text("⏰ Upcoming Session", color = Color(0xFF94A3B8), fontSize = 16.sp)
+        Text("Upcoming Session", color = Color(0xFF94A3B8), fontSize = 16.sp)
         Spacer(Modifier.height(8.dp))
         Text(title, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
 
@@ -217,7 +217,7 @@ fun PreSessionScreen(
 
         Spacer(Modifier.height(24.dp))
         OutlinedButton(onClick = onSilenceAlarm) {
-            Text("🔇 Silence Alarm (or Vol-Key)")
+            Text("Silence Alarm (or Vol-Key)")
         }
 
         Spacer(Modifier.height(16.dp))

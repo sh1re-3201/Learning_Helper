@@ -262,7 +262,7 @@ private fun ActiveSessionCard(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                if (isBreak) "☕ Break Time" else "🔒 Focus Mode Active",
+                if (isBreak) "Break Time" else "Focus Mode Active",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -286,7 +286,7 @@ private fun ActiveSessionCard(
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onOpenDeskClock) {
-                    Text("🕒 Desk Clock (AOD)")
+                    Text("Desk Clock (AOD)")
                 }
                 if (session.canUseRestToken(effNow)) {
                     OutlinedButton(onClick = onUseRestToken) {
@@ -578,7 +578,7 @@ private fun UpcomingSessionCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    "📅 Upcoming Focus Session",
+                    "Upcoming Focus Session",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onPrimaryContainer,

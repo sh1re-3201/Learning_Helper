@@ -148,7 +148,7 @@ class AlarmReceiver : BroadcastReceiver() {
                     .setPriority(NotificationCompat.PRIORITY_HIGH)
                     .setAutoCancel(true)
                     .setContentIntent(pendingPre)
-                    .addAction(R.drawable.ic_stat_focus, "🔇 Silence", pendingSilence)
+                    .addAction(R.drawable.ic_stat_focus, "Silence", pendingSilence)
                     .addAction(R.drawable.ic_stat_focus, "Skip (20w reason)", pendingPre)
                     .build()
 

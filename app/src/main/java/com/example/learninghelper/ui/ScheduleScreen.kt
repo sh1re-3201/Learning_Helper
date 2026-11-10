@@ -59,7 +59,7 @@ fun ScheduleScreen(
 
         if (isLocked) {
             Text(
-                "🔒 Schedules cannot be edited during focus or within 5m of a scheduled session.",
+                "Schedules cannot be edited during focus or within 5m of a scheduled session.",
                 color = MaterialTheme.colorScheme.error,
                 fontSize = 12.sp,
                 modifier = Modifier.padding(vertical = 8.dp),
@@ -291,7 +291,7 @@ fun AddScheduleDialog(
                             label = { Text("Target Date") },
                         )
                         Button(onClick = openDatePicker) {
-                            Text("Pick 📅")
+                            Text("Pick")
                         }
                     }
                 }

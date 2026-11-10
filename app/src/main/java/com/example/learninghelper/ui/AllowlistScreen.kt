@@ -58,7 +58,7 @@ fun AllowlistScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
             )
         }
         Text(
-            if (isLocked) "🔒 Locked: Allowlist cannot be changed during focus or pre-session." else "Select up to 5 optional apps. Default and system apps consume 0 quota.",
+            if (isLocked) "Locked: Allowlist cannot be changed during focus or pre-session." else "Select up to 5 optional apps. Default and system apps consume 0 quota.",
             style = MaterialTheme.typography.bodyMedium,
             color = if (isLocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 16.dp),
@@ -252,7 +252,7 @@ fun AllowlistScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                     FilterChip(
                         selected = filterThesisEssentials,
                         onClick = { filterThesisEssentials = !filterThesisEssentials },
-                        label = { Text("⚡ Thesis Essentials") }
+                        label = { Text("Thesis Essentials") }
                     )
                 }
 
