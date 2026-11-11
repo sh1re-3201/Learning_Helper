@@ -19,6 +19,10 @@ object AppCatalog {
         "com.samsung.android.app.routines",
         "com.android.vending",
         "com.sec.android.app.samsungapps",
+        "com.samsung.knox.securefolder",
+        "com.samsung.android.da.daagent",
+        "com.samsung.android.app.cocktailbarservice",
+        "com.samsung.android.app.appsedge",
     )
 
     val THESIS_ESSENTIALS = setOf(

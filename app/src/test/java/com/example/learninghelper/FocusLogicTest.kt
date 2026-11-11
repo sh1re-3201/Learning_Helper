@@ -694,4 +694,59 @@ class FocusLogicTest {
         assertEquals(5, session.workMinutes)
         assertEquals(0, session.breakMinutes)
     }
+
+    @Test
+    fun testPreSessionAntiTamperingActiveWithoutSession() {
+        val now = 1_000_000L
+        val alwaysBlocked = AppCatalog.ALWAYS_BLOCKED_DURING_SESSION
+        val alwaysAllowed = AppCatalog.STATIC_ALWAYS_ALLOWED
+        val allowlist = FocusRepository.DEFAULT_ALLOWLIST
+
+        // Pre-session active, but session is null (T-5m .. T-0 window)
+        val secureFolderBlocked = FocusPolicy.shouldBlock(
+            packageName = "com.samsung.knox.securefolder",
+            session = null,
+            now = now,
+            allowlist = allowlist,
+            alwaysAllowed = alwaysAllowed,
+            alwaysBlockedDuringSession = alwaysBlocked,
+            inPreSessionLockWindow = true,
+        )
+        assertTrue("Secure folder must be blocked during pre-session lock window", secureFolderBlocked)
+
+        val edgePanelBlocked = FocusPolicy.shouldBlock(
+            packageName = "com.samsung.android.app.cocktailbarservice",
+            session = null,
+            now = now,
+            allowlist = allowlist,
+            alwaysAllowed = alwaysAllowed,
+            alwaysBlockedDuringSession = alwaysBlocked,
+            inPreSessionLockWindow = true,
+        )
+        assertTrue("Edge panel must be blocked during pre-session lock window", edgePanelBlocked)
+
+        // Normal apps (e.g. WhatsApp or Chrome) are NOT blocked during pre-session
+        val whatsappBlocked = FocusPolicy.shouldBlock(
+            packageName = "com.whatsapp",
+            session = null,
+            now = now,
+            allowlist = allowlist,
+            alwaysAllowed = alwaysAllowed,
+            alwaysBlockedDuringSession = alwaysBlocked,
+            inPreSessionLockWindow = true,
+        )
+        assertFalse("WhatsApp must not be blocked during pre-session window", whatsappBlocked)
+    }
+
+    @Test
+    fun testRebootWallDeltaClamping() {
+        val rawDelta = 10 * 3600 * 1000L // 10 hours forward clock shift
+        val maxSlack = FocusRepository.MAX_REBOOT_SLACK_MS // 5 minutes
+        val clampedDelta = minOf(rawDelta, maxSlack)
+        assertEquals(5 * 60_000L, clampedDelta)
+
+        val normalRebootDelta = 45_000L // 45s normal reboot
+        val clampedNormal = minOf(normalRebootDelta, maxSlack)
+        assertEquals(45_000L, clampedNormal)
+    }
 }

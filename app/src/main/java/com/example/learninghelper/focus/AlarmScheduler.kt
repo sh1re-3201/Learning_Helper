@@ -161,6 +161,7 @@ class AlarmReceiver : BroadcastReceiver() {
                     }
                 }
 
+                ForegroundAppMonitor.start(context)
                 AlarmScheduler.scheduleNext(context)
             }
             ACTION_PRE_2M -> {
@@ -182,6 +183,7 @@ class AlarmReceiver : BroadcastReceiver() {
                     }
                     context.startActivity(preIntent)
                 }
+                ForegroundAppMonitor.start(context)
                 AlarmScheduler.scheduleNext(context)
             }
             ACTION_START -> {

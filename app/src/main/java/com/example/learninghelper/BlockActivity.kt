@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -52,10 +53,11 @@ class BlockActivity : ComponentActivity() {
     }
 
     private fun render(intent: Intent) {
-        val blockedPackage = intent.getStringExtra(EXTRA_PACKAGE)
-        val blockedLabel = blockedPackage?.let { AppCatalog.labelFor(this, it) } ?: "This app"
+        val blockedPackage = intent.getStringExtra(EXTRA_PACKAGE) ?: ""
+        val blockedLabel = if (blockedPackage.isNotEmpty()) AppCatalog.labelFor(this, blockedPackage) else "This app"
         setContent {
             BlockScreen(
+                blockedPackage = blockedPackage,
                 blockedLabel = blockedLabel,
                 onBackToStudy = {
                     startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -115,6 +117,7 @@ private val motivationalLines = listOf(
 
 @Composable
 private fun BlockScreen(
+    blockedPackage: String,
     blockedLabel: String,
     onBackToStudy: () -> Unit,
     onGoHome: () -> Unit,
@@ -123,6 +126,9 @@ private fun BlockScreen(
     onSessionOver: () -> Unit,
 ) {
     val session by FocusRepository.session.collectAsState()
+    val allowlist by FocusRepository.allowlist.collectAsState()
+    val context = LocalContext.current
+    val alwaysAllowed = remember(context) { AppCatalog.alwaysAllowedPackages(context) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var isStarted by remember { mutableStateOf(false) }
 
@@ -145,7 +151,21 @@ private fun BlockScreen(
         skippedOccurrenceIds = skippedOccurrences,
         nowMillis = now,
     )
-    val shouldStayBlocked = active != null || inPreSession
+    val shouldStayBlocked = remember(blockedPackage, active, inPreSession, effNow, allowlist) {
+        if (blockedPackage.isBlank()) {
+            active != null || inPreSession
+        } else {
+            FocusPolicy.shouldBlock(
+                packageName = blockedPackage,
+                session = active,
+                now = effNow,
+                allowlist = allowlist,
+                alwaysAllowed = alwaysAllowed,
+                alwaysBlockedDuringSession = AppCatalog.ALWAYS_BLOCKED_DURING_SESSION,
+                inPreSessionLockWindow = inPreSession,
+            )
+        }
+    }
 
     LaunchedEffect(shouldStayBlocked) {
         if (!shouldStayBlocked) onSessionOver()

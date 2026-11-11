@@ -198,6 +198,38 @@ object FocusRepository {
         }
     }
 
+    const val MAX_REBOOT_SLACK_MS = 5 * 60_000L
+    private const val CHECKPOINT_INTERVAL_MS = 30_000L
+    private var lastCheckpointElapsed = 0L
+    private var cachedBootCount: Int? = null
+
+    /**
+     * Periodically flushes monotonic elapsed progress to persistent storage (throttled to >= 30s).
+     */
+    @Synchronized
+    fun checkpointMonotonicProgress(force: Boolean = false) {
+        val session = _session.value ?: return
+        val curElapsed = SystemClock.elapsedRealtime()
+        if (!force && curElapsed - lastCheckpointElapsed < CHECKPOINT_INTERVAL_MS) {
+            return
+        }
+        val curBoot = getBootCount()
+        val anchorBoot = prefs.getInt(KEY_ANCHOR_BOOT_COUNT, -1)
+        val anchorElapsed = prefs.getLong(KEY_ANCHOR_ELAPSED, 0L)
+
+        if (anchorBoot == curBoot && anchorElapsed > 0L && curElapsed >= anchorElapsed) {
+            val delta = curElapsed - anchorElapsed
+            val newAccumulated = prefs.getLong(KEY_ACCUMULATED_ELAPSED, 0L) + delta
+            val curWall = System.currentTimeMillis()
+            lastCheckpointElapsed = curElapsed
+            prefs.edit()
+                .putLong(KEY_ACCUMULATED_ELAPSED, newAccumulated)
+                .putLong(KEY_ANCHOR_ELAPSED, curElapsed)
+                .putLong(KEY_ANCHOR_WALL, curWall)
+                .apply()
+        }
+    }
+
     /**
      * Reconciles monotonic clock anchor across reboots.
      */
@@ -210,7 +242,9 @@ object FocusRepository {
         if (anchorBoot != curBoot && curBoot > 0) {
             val lastSavedWall = prefs.getLong(KEY_ANCHOR_WALL, session.startAt)
             val curWall = System.currentTimeMillis()
-            val wallDelta = (curWall - lastSavedWall).coerceAtLeast(0L)
+            val rawDelta = (curWall - lastSavedWall).coerceAtLeast(0L)
+            // Cap reboot delta to MAX_REBOOT_SLACK_MS (5m) to prevent forward clock tampering bypass
+            val wallDelta = minOf(rawDelta, MAX_REBOOT_SLACK_MS)
 
             val accumulated = prefs.getLong(KEY_ACCUMULATED_ELAPSED, 0L) + wallDelta
 
@@ -238,9 +272,14 @@ object FocusRepository {
         }
     }
 
-    private fun getBootCount(): Int = runCatching {
-        Settings.Global.getInt(appContext.contentResolver, Settings.Global.BOOT_COUNT)
-    }.getOrDefault(0)
+    private fun getBootCount(): Int {
+        cachedBootCount?.let { return it }
+        val count = runCatching {
+            Settings.Global.getInt(appContext.contentResolver, Settings.Global.BOOT_COUNT)
+        }.getOrDefault(0)
+        if (count > 0) cachedBootCount = count
+        return count
+    }
 
     fun activeSession(wallNow: Long = System.currentTimeMillis()): FocusSession? {
         val session = _session.value ?: return null
