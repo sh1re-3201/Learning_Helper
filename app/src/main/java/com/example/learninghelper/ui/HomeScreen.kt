@@ -266,16 +266,12 @@ private fun ActiveSessionCard(
                 fontWeight = FontWeight.SemiBold,
             )
 
-            CircularProgressIndicator(
-                progress = { 1f - session.progress(effNow) },
-                modifier = Modifier.size(140.dp),
-                strokeWidth = 10.dp,
-            )
-
-            Text(
-                FocusPolicy.formatDuration(session.remainingMillis(effNow)),
-                fontSize = 42.sp,
-                fontWeight = FontWeight.Light,
+            AnalogStopwatchDial(
+                progress = session.progress(effNow),
+                timeFormatted = FocusPolicy.formatDuration(session.remainingMillis(effNow)),
+                phaseLabel = if (isBreak) "BREAK" else "FOCUS",
+                isBreak = isBreak,
+                dialSize = 210.dp,
             )
 
             Text(
