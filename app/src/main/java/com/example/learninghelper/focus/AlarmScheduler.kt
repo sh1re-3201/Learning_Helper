@@ -6,10 +6,12 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
@@ -24,16 +26,22 @@ object AlarmPlayer {
     private var wakeLock: PowerManager.WakeLock? = null
     private val handler = Handler(Looper.getMainLooper())
     private val autoStopRunnable = Runnable { stop() }
+    private var audioFocusRequest: AudioFocusRequest? = null
+    private var appContext: Context? = null
 
     @Synchronized
     fun play(context: Context, soundUriString: String?, timeoutMs: Long = 45_000L) {
         stop()
 
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-        if (audioManager?.mode == AudioManager.MODE_IN_CALL || audioManager?.mode == AudioManager.MODE_IN_COMMUNICATION) {
-            Log.i("AlarmPlayer", "Call active; suppressing audible alarm.")
+        if (audioManager?.mode == AudioManager.MODE_IN_CALL ||
+            audioManager?.mode == AudioManager.MODE_IN_COMMUNICATION ||
+            audioManager?.mode == AudioManager.MODE_RINGTONE
+        ) {
+            Log.i("AlarmPlayer", "Call active or ringing; suppressing audible alarm.")
             return
         }
+        appContext = context.applicationContext
 
         try {
             val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
@@ -42,6 +50,22 @@ object AlarmPlayer {
             }
 
             handler.postDelayed(autoStopRunnable, timeoutMs)
+
+            val audioAttributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ALARM)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                    .setAudioAttributes(audioAttributes)
+                    .build()
+                audioFocusRequest = focusRequest
+                audioManager?.requestAudioFocus(focusRequest)
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager?.requestAudioFocus(null, AudioManager.STREAM_ALARM, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            }
 
             val soundUri = if (!soundUriString.isNullOrBlank()) {
                 Uri.parse(soundUriString)
@@ -52,12 +76,7 @@ object AlarmPlayer {
 
             mediaPlayer = MediaPlayer().apply {
                 setDataSource(context, soundUri)
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
+                setAudioAttributes(audioAttributes)
                 isLooping = true
                 prepare()
                 start()
@@ -73,6 +92,17 @@ object AlarmPlayer {
     @Synchronized
     fun stop() {
         handler.removeCallbacks(autoStopRunnable)
+        try {
+            val am = appContext?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                audioFocusRequest?.let { am?.abandonAudioFocusRequest(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                am?.abandonAudioFocus(null)
+            }
+        } catch (ignored: Exception) {}
+        audioFocusRequest = null
+
         try {
             mediaPlayer?.stop()
             mediaPlayer?.release()
@@ -174,7 +204,9 @@ class AlarmReceiver : BroadcastReceiver() {
                 AlarmPlayer.play(context, FocusRepository.alarmSoundUri.value)
 
                 val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-                val inCall = audioManager?.mode == AudioManager.MODE_IN_CALL || audioManager?.mode == AudioManager.MODE_IN_COMMUNICATION
+                val inCall = audioManager?.mode == AudioManager.MODE_IN_CALL ||
+                    audioManager?.mode == AudioManager.MODE_IN_COMMUNICATION ||
+                    audioManager?.mode == AudioManager.MODE_RINGTONE
                 if (!inCall) {
                     val preIntent = PreSessionActivity.createIntent(
                         context, occurrenceId, title, startMillis, durationMin, workMin, breakMin, hasLongBreak = hasLongBreak
@@ -182,6 +214,27 @@ class AlarmReceiver : BroadcastReceiver() {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                     }
                     context.startActivity(preIntent)
+                } else {
+                    // Call in progress or ringing: update the pre-session notification in notification tray
+                    if (FocusNotifications.canPost(context)) {
+                        val pendingPre = PendingIntent.getActivity(
+                            context,
+                            101,
+                            PreSessionActivity.createIntent(context, occurrenceId, title, startMillis, durationMin, workMin, breakMin, hasLongBreak = hasLongBreak),
+                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                        )
+                        val notif = NotificationCompat.Builder(context, FocusNotifications.CHANNEL_ALARMS)
+                            .setSmallIcon(R.drawable.ic_stat_focus)
+                            .setContentTitle("Focus session starts in 2 minutes")
+                            .setContentText("Focus lock begins at scheduled time. Tap to open preparation screen.")
+                            .setPriority(NotificationCompat.PRIORITY_HIGH)
+                            .setAutoCancel(true)
+                            .setContentIntent(pendingPre)
+                            .build()
+                        runCatching {
+                            context.getSystemService(NotificationManager::class.java).notify(FocusNotifications.ID_PRE_SESSION, notif)
+                        }
+                    }
                 }
                 ForegroundAppMonitor.start(context)
                 AlarmScheduler.scheduleNext(context)

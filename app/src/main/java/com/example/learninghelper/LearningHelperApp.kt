@@ -11,5 +11,6 @@ class LearningHelperApp : Application() {
         FocusRepository.init(this)
         FocusNotifications.ensureChannels(this)
         FocusNotificationListenerService.resetInterruptionFilterFailsafe(this)
+        FocusNotificationListenerService.ensureRebound(this)
     }
 }

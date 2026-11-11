@@ -749,4 +749,42 @@ class FocusLogicTest {
         val clampedNormal = minOf(normalRebootDelta, maxSlack)
         assertEquals(45_000L, clampedNormal)
     }
+
+    @Test
+    fun testGrandfatheredVoIPPackageNotBlockedDuringWork() {
+        val now = 1_000_000L
+        val session = FocusSession(
+            startAt = now,
+            endAt = now + 60 * 60_000L,
+            workMinutes = 50,
+            breakMinutes = 10,
+        )
+        val alwaysAllowed = AppCatalog.STATIC_ALWAYS_ALLOWED
+        val alwaysBlocked = AppCatalog.ALWAYS_BLOCKED_DURING_SESSION
+        val allowlist = FocusRepository.DEFAULT_ALLOWLIST
+
+        // In WORK phase, an incoming Teams call is grandfathered
+        val teamsBlocked = FocusPolicy.shouldBlock(
+            packageName = "com.microsoft.teams",
+            session = session,
+            now = now + 15 * 60_000L,
+            allowlist = allowlist,
+            alwaysAllowed = alwaysAllowed,
+            alwaysBlockedDuringSession = alwaysBlocked,
+            grandfatheredCallPackage = "com.microsoft.teams",
+        )
+        assertFalse("Grandfathered VoIP meeting package must not be blocked during work phase", teamsBlocked)
+
+        // Other non-allowed distracting apps must remain strictly blocked
+        val instaBlocked = FocusPolicy.shouldBlock(
+            packageName = "com.instagram.android",
+            session = session,
+            now = now + 15 * 60_000L,
+            allowlist = allowlist,
+            alwaysAllowed = alwaysAllowed,
+            alwaysBlockedDuringSession = alwaysBlocked,
+            grandfatheredCallPackage = "com.microsoft.teams",
+        )
+        assertTrue("Distracting apps must remain blocked while VoIP call is active", instaBlocked)
+    }
 }

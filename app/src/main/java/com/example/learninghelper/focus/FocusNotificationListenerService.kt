@@ -26,6 +26,10 @@ class FocusNotificationListenerService : NotificationListenerService() {
             instance = null
         }
         super.onListenerDisconnected()
+        // Attempt immediate rebind recovery on disconnect (Android 7.0+ API)
+        runCatching {
+            requestRebind(android.content.ComponentName(this, FocusNotificationListenerService::class.java))
+        }
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
@@ -117,7 +121,8 @@ class FocusNotificationListenerService : NotificationListenerService() {
                 val active = service.activeNotifications ?: return null
                 for (sbn in active) {
                     val notif = sbn.notification ?: continue
-                    if (notif.category == Notification.CATEGORY_CALL) {
+                    val isOngoing = sbn.isOngoing || (notif.flags and Notification.FLAG_ONGOING_EVENT) != 0
+                    if (notif.category == Notification.CATEGORY_CALL && isOngoing) {
                         return sbn.packageName
                     }
                 }
@@ -125,6 +130,14 @@ class FocusNotificationListenerService : NotificationListenerService() {
                 Log.w(TAG, "Failed to inspect active call notifications", e)
             }
             return null
+        }
+
+        fun ensureRebound(context: Context) {
+            if (instance?.get() == null) {
+                runCatching {
+                    requestRebind(android.content.ComponentName(context, FocusNotificationListenerService::class.java))
+                }
+            }
         }
 
         fun setInterruptionFilter(filter: Int) {

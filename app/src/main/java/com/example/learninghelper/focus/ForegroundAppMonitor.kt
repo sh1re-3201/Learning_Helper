@@ -236,26 +236,24 @@ object ForegroundAppMonitor {
                 val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
                 val inCall = audioManager?.mode == AudioManager.MODE_IN_CALL || audioManager?.mode == AudioManager.MODE_IN_COMMUNICATION
 
-                if (!workPhaseGrandfatherChecked) {
-                    workPhaseGrandfatherChecked = true
-                    if (inCall) {
+                if (inCall) {
+                    val currentGrandfathered = FocusRepository.grandfatheredCallPackage.value
+                    if (currentGrandfathered.isNullOrBlank()) {
                         val activePkg = FocusNotificationListenerService.findActiveCallPackage()
-                            ?: candidatePackages.firstOrNull {
-                                it !in alwaysAllowed &&
-                                    it !in AppCatalog.ALWAYS_BLOCKED_DURING_SESSION &&
-                                    it !in FocusRepository.allowlist.value
-                            }
-                        if (!activePkg.isNullOrBlank()) {
+                        if (!activePkg.isNullOrBlank() && activePkg !in AppCatalog.ALWAYS_BLOCKED_DURING_SESSION) {
                             FocusRepository.setGrandfatheredCallPackage(activePkg)
+                            lastAllowedPackage = null
+                            lastAllowedPhase = null
                         }
-                    } else {
-                        FocusRepository.setGrandfatheredCallPackage(null)
                     }
-                }
-
-                val currentGrandfathered = FocusRepository.grandfatheredCallPackage.value
-                if (!currentGrandfathered.isNullOrBlank()) {
-                    if (!inCall) {
+                    if (postCallRunnableScheduled) {
+                        postCallRunnableScheduled = false
+                        backgroundHandler.removeCallbacks(postCallLockoutRunnable)
+                    }
+                    lastCallNormalElapsed = 0L
+                } else {
+                    val currentGrandfathered = FocusRepository.grandfatheredCallPackage.value
+                    if (!currentGrandfathered.isNullOrBlank()) {
                         if (lastCallNormalElapsed == 0L) {
                             lastCallNormalElapsed = elapsed
                             if (!postCallRunnableScheduled) {
