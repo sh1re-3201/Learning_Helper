@@ -95,9 +95,7 @@ object FocusNotifications {
     }
 
     fun showComplete(context: Context, session: FocusSession) {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            return
-        }
+        if (!canPost(context)) return
         val minutes = session.durationMillis / 60_000L
         val notification = NotificationCompat.Builder(context, CHANNEL_EVENTS)
             .setSmallIcon(R.drawable.ic_stat_focus)
