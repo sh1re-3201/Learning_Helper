@@ -12,6 +12,7 @@ import android.os.HandlerThread
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
+import android.util.Log
 import com.example.learninghelper.BlockActivity
 import com.example.learninghelper.data.FocusRepository
 
@@ -24,6 +25,7 @@ import com.example.learninghelper.data.FocusRepository
  */
 object ForegroundAppMonitor {
 
+    private const val TAG = "ForegroundAppMonitor"
     private const val CHECK_INTERVAL_MS = 400L
     private const val DEBOUNCE_MS = 400L
     private const val LOOKBACK_SWEEP_MS = 45 * 60_000L
@@ -318,7 +320,22 @@ object ForegroundAppMonitor {
                         val intent = BlockActivity.createIntent(context, pkg).apply {
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                         }
-                        context.startActivity(intent)
+                        val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? android.hardware.display.DisplayManager
+                        val displays = dm?.displays ?: emptyArray()
+                        if (displays.size > 1) {
+                            for (d in displays) {
+                                if (d.isValid && d.state == android.view.Display.STATE_ON) {
+                                    val options = android.app.ActivityOptions.makeBasic().setLaunchDisplayId(d.displayId)
+                                    try {
+                                        context.startActivity(intent, options.toBundle())
+                                    } catch (e: Exception) {
+                                        Log.w(TAG, "Could not launch BlockActivity on display ${d.displayId}", e)
+                                    }
+                                }
+                            }
+                        } else {
+                            context.startActivity(intent)
+                        }
                     }
                 } else {
                     backgroundHandler.postDelayed({ checkForeground(context, isImmediateSweep = false) }, DEBOUNCE_MS)

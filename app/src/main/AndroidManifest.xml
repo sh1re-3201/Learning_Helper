@@ -60,7 +60,8 @@
             android:name=".BlockActivity"
             android:excludeFromRecents="true"
             android:exported="false"
-            android:launchMode="singleTask"
+            android:launchMode="singleTop"
+            android:resizeableActivity="true"
             android:taskAffinity=""
             android:theme="@style/Theme.LearningHelper" />
 

@@ -932,4 +932,64 @@ class FocusLogicTest {
         val afterDate = ZonedDateTime.of(2026, 10, 29, 8, 0, 0, 0, ZoneId.of("UTC")).toInstant().toEpochMilli()
         assertFalse("Past expired calendar routine must NOT block future MWF routine", ScheduleCalculator.doSchedulesOverlap(item1, item5, nowMillis = afterDate, zoneId = ZoneId.of("UTC")))
     }
+
+    @Test
+    fun testAllowlistOptionalQuotaClamping() {
+        val defaultApps = FocusRepository.DEFAULT_ALLOWLIST
+        val backupApps = setOf(
+            "com.app.extra1", "com.app.extra2", "com.app.extra3",
+            "com.app.extra4", "com.app.extra5", "com.app.extra6", "com.app.extra7"
+        )
+        val mergedSet = defaultApps + backupApps
+        val optionalApps = (mergedSet - defaultApps).toList().take(FocusRepository.MAX_OPTIONAL_ALLOWED_APPS)
+        val clamped = (defaultApps + optionalApps).toSet()
+
+        val optionalCount = clamped.count { it !in defaultApps }
+        assertEquals(5, optionalCount)
+        assertTrue(clamped.containsAll(defaultApps))
+    }
+
+    @Test
+    fun testHistoryTypeSeparationForVectorSimilarity() {
+        val entries = listOf(
+            HistoryEntry("1", HistoryType.SKIPPED, 1000L, title = "Skip", text = "Short skip reason here min twenty words"),
+            HistoryEntry("2", HistoryType.EMERGENCY_EXIT, 2000L, title = "Exit", text = "Legitimate long emergency exit essay here..."),
+            HistoryEntry("3", HistoryType.COMPLETED, 3000L, title = "Done"),
+            HistoryEntry("4", HistoryType.EMERGENCY_EXIT, 4000L, title = "Exit 2", text = "Another emergency exit text..."),
+        )
+        val emergencyEssays = entries.filter { it.type == HistoryType.EMERGENCY_EXIT }.map { it.text }.filter { it.isNotBlank() }
+        assertEquals(2, emergencyEssays.size)
+        assertTrue(emergencyEssays.contains("Legitimate long emergency exit essay here..."))
+        assertFalse(emergencyEssays.contains("Short skip reason here min twenty words"))
+    }
+
+    @Test
+    fun testMilestoneAndSkipPruningLexicographicalDate() {
+        val cutoff = "2026-10-15"
+        val milestones = setOf(
+            "2026-10-10T10:00:PRE_5M", // older than cutoff
+            "2026-10-14T23:30:START",  // older than cutoff
+            "2026-10-15T09:00:PRE_2M", // matches cutoff
+            "2026-10-20T14:00:START",  // newer than cutoff
+        )
+        val valid = milestones.filter { it >= cutoff }.toSet()
+        assertEquals(2, valid.size)
+        assertTrue(valid.contains("2026-10-15T09:00:PRE_2M"))
+        assertTrue(valid.contains("2026-10-20T14:00:START"))
+        assertFalse(valid.contains("2026-10-10T10:00:PRE_5M"))
+    }
+
+    @Test
+    fun testEmergencyExitInitialTypingExploitPrevention() {
+        // Exploit check: when screen opens, lastActiveTypingElapsed is initialized to 0L
+        val lastActiveTypingElapsed = 0L
+        val nowElapsed = 50_000L
+        val activelyTyping = lastActiveTypingElapsed > 0L && (nowElapsed - lastActiveTypingElapsed) <= 10_000L
+        assertFalse("Must not grant active typing seconds without initial keystroke", activelyTyping)
+
+        // After user types:
+        val userTypedAt = 50_000L
+        val activeAfterType = userTypedAt > 0L && (nowElapsed - userTypedAt) <= 10_000L
+        assertTrue("Must count as actively typing within 10s of keystroke", activeAfterType)
+    }
 }

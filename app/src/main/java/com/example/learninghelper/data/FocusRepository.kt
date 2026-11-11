@@ -144,6 +144,7 @@ object FocusRepository {
         }
         _history.value = pruned
 
+        pruneStaleMilestonesAndSkips(now)
         restoreSession()
         reconcileReboot()
 
@@ -316,6 +317,8 @@ object FocusRepository {
             return updated
         }
 
+        clearExpiredSession(now)
+
         val session = FocusPolicy.createSession(now, durationMinutes, workMinutes, breakMinutes, hasLongBreak)
         prefs.edit()
             .putLong(KEY_START, session.startAt)
@@ -348,6 +351,8 @@ object FocusRepository {
     ): FocusSession {
         val current = activeSession(now)
         if (current != null) return current
+
+        clearExpiredSession(now)
 
         val session = FocusPolicy.createSession(
             now = occurrence.startAtMillis,
@@ -598,6 +603,33 @@ object FocusRepository {
             .filter { it.isNotBlank() }
     }
 
+    fun pastEmergencyExitEssays(): List<String> {
+        return _history.value
+            .filter { it.type == HistoryType.EMERGENCY_EXIT }
+            .map { it.text }
+            .filter { it.isNotBlank() }
+    }
+
+    fun pruneStaleMilestonesAndSkips(now: Long = System.currentTimeMillis()) {
+        val cutoffDate = java.time.Instant.ofEpochMilli(now)
+            .atZone(java.time.ZoneId.systemDefault())
+            .toLocalDate()
+            .minusDays(14)
+            .toString() // "yyyy-MM-dd"
+
+        val validSkips = _skippedOccurrences.value.filter { it >= cutoffDate }.toSet()
+        if (validSkips.size != _skippedOccurrences.value.size) {
+            _skippedOccurrences.value = validSkips
+            prefs.edit().putString(KEY_SKIPPED_OCCURRENCES_JSON, serializeStringSet(validSkips)).apply()
+        }
+
+        val validMilestones = _firedMilestones.value.filter { it >= cutoffDate }.toSet()
+        if (validMilestones.size != _firedMilestones.value.size) {
+            _firedMilestones.value = validMilestones
+            prefs.edit().putString(KEY_FIRED_MILESTONES_JSON, serializeStringSet(validMilestones)).apply()
+        }
+    }
+
     private fun addHistoryEntry(entry: HistoryEntry) {
         val now = System.currentTimeMillis()
         val cleaned = _history.value.filterNot {
@@ -623,11 +655,17 @@ object FocusRepository {
 
     private val backupExecutor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor()
     private var pendingBackupTask: java.util.concurrent.ScheduledFuture<*>? = null
+    @Volatile
+    private var hasSyncedExternalBackupThisProcess = false
 
     fun triggerExternalBackup(debounceMs: Long = 500L) {
         if (!::appContext.isInitialized) return
         if (!com.example.learninghelper.focus.Permissions.hasAllFilesAccess()) return
         synchronized(this) {
+            if (!hasSyncedExternalBackupThisProcess && ExternalBackupStorage.backupFileExists()) {
+                syncWithExternalBackup(appContext)
+                return
+            }
             pendingBackupTask?.cancel(false)
             pendingBackupTask = backupExecutor.schedule({
                 val snapshot = BackupSnapshot(
@@ -644,12 +682,37 @@ object FocusRepository {
         }
     }
 
+    fun syncWithExternalBackupAsync(context: Context) {
+        backupExecutor.execute {
+            syncWithExternalBackup(context)
+        }
+    }
+
     @Synchronized
     fun syncWithExternalBackup(context: Context) {
         init(context)
         if (!com.example.learninghelper.focus.Permissions.hasAllFilesAccess()) return
-        val backup = ExternalBackupStorage.readBackup() ?: run {
-            triggerExternalBackup(0L)
+        hasSyncedExternalBackupThisProcess = true
+        val backup = ExternalBackupStorage.readBackup() ?: return
+
+        // Merge history: deduplicate by ID, sort descending by timestamp, cap at 200
+        val localHist = _history.value.toMutableList()
+        val localHistIds = localHist.map { it.id }.toSet()
+        var histChanged = false
+        for (entry in backup.history) {
+            if (entry.id !in localHistIds) {
+                localHist.add(entry)
+                histChanged = true
+            }
+        }
+        if (histChanged) {
+            val mergedHist = localHist.sortedByDescending { it.timestamp }.take(200)
+            prefs.edit().putString(KEY_HISTORY_JSON, serializeHistoryJson(mergedHist)).apply()
+            _history.value = mergedHist
+        }
+
+        // Anti-Tampering (Rule 2.2): Never modify allowlist, schedules, or settings while focus is locked
+        if (isModificationLocked()) {
             return
         }
 
@@ -674,22 +737,6 @@ object FocusRepository {
             _schedules.value = localSchedules
         }
 
-        // Merge history: deduplicate by ID, sort descending by timestamp, cap at 200
-        val localHist = _history.value.toMutableList()
-        val localHistIds = localHist.map { it.id }.toSet()
-        var histChanged = false
-        for (entry in backup.history) {
-            if (entry.id !in localHistIds) {
-                localHist.add(entry)
-                histChanged = true
-            }
-        }
-        if (histChanged) {
-            val mergedHist = localHist.sortedByDescending { it.timestamp }.take(200)
-            prefs.edit().putString(KEY_HISTORY_JSON, serializeHistoryJson(mergedHist)).apply()
-            _history.value = mergedHist
-        }
-
         // Merge skipped occurrences
         val mergedSkips = (_skippedOccurrences.value + backup.skippedOccurrences)
         if (mergedSkips.size != _skippedOccurrences.value.size) {
@@ -697,11 +744,13 @@ object FocusRepository {
             _skippedOccurrences.value = mergedSkips
         }
 
-        // Merge allowlist ensuring DEFAULT_ALLOWLIST remains intact
-        val mergedAllowlist = (_allowlist.value + backup.allowlist + DEFAULT_ALLOWLIST).toMutableSet()
-        if (mergedAllowlist.size != _allowlist.value.size) {
-            prefs.edit().putStringSet(KEY_ALLOWLIST, HashSet(mergedAllowlist)).apply()
-            _allowlist.value = mergedAllowlist
+        // Merge allowlist ensuring DEFAULT_ALLOWLIST remains intact and clamping optional apps to MAX_OPTIONAL_ALLOWED_APPS (BUG-29)
+        val mergedAllowlist = (_allowlist.value + backup.allowlist + DEFAULT_ALLOWLIST)
+        val optionalApps = (mergedAllowlist - DEFAULT_ALLOWLIST).toList().take(MAX_OPTIONAL_ALLOWED_APPS)
+        val clampedAllowlist = (DEFAULT_ALLOWLIST + optionalApps).toMutableSet()
+        if (clampedAllowlist != _allowlist.value) {
+            prefs.edit().putStringSet(KEY_ALLOWLIST, HashSet(clampedAllowlist)).apply()
+            _allowlist.value = clampedAllowlist
         }
 
         triggerExternalBackup(0L)
@@ -739,39 +788,41 @@ object FocusRepository {
         val array = JSONArray(jsonStr)
         val list = mutableListOf<ScheduledItem>()
         for (i in 0 until array.length()) {
-            val obj = array.getJSONObject(i)
-            val days = mutableSetOf<DayOfWeek>()
-            val daysArr = obj.optJSONArray("daysOfWeek")
-            if (daysArr != null) {
-                for (d in 0 until daysArr.length()) {
-                    runCatching { days.add(DayOfWeek.valueOf(daysArr.getString(d))) }
+            runCatching {
+                val obj = array.getJSONObject(i)
+                val days = mutableSetOf<DayOfWeek>()
+                val daysArr = obj.optJSONArray("daysOfWeek")
+                if (daysArr != null) {
+                    for (d in 0 until daysArr.length()) {
+                        runCatching { days.add(DayOfWeek.valueOf(daysArr.getString(d))) }
+                    }
                 }
-            }
-            val sH = obj.getInt("startHour")
-            val sM = obj.getInt("startMinute")
-            val dur = obj.optInt("durationMinutes", 50)
-            val eH = obj.optInt("endHour", (sH + (sM + dur) / 60) % 24)
-            val eM = obj.optInt("endMinute", (sM + dur) % 60)
-            list.add(
-                ScheduledItem(
-                    id = obj.getString("id"),
-                    label = obj.optString("label", ""),
-                    type = ScheduleType.valueOf(obj.getString("type")),
-                    daysOfWeek = days,
-                    year = obj.optInt("year", 0),
-                    month = obj.optInt("month", 0),
-                    dayOfMonth = obj.optInt("dayOfMonth", 0),
-                    startHour = sH,
-                    startMinute = sM,
-                    durationMinutes = dur,
-                    workMinutes = obj.optInt("workMinutes", 50),
-                    breakMinutes = obj.optInt("breakMinutes", 0),
-                    enabled = obj.optBoolean("enabled", true),
-                    endHour = eH,
-                    endMinute = eM,
-                    hasLongBreak = obj.optBoolean("hasLongBreak", false),
+                val sH = obj.getInt("startHour")
+                val sM = obj.getInt("startMinute")
+                val dur = obj.optInt("durationMinutes", 50)
+                val eH = obj.optInt("endHour", (sH + (sM + dur) / 60) % 24)
+                val eM = obj.optInt("endMinute", (sM + dur) % 60)
+                list.add(
+                    ScheduledItem(
+                        id = obj.getString("id"),
+                        label = obj.optString("label", ""),
+                        type = ScheduleType.valueOf(obj.getString("type")),
+                        daysOfWeek = days,
+                        year = obj.optInt("year", 0),
+                        month = obj.optInt("month", 0),
+                        dayOfMonth = obj.optInt("dayOfMonth", 0),
+                        startHour = sH,
+                        startMinute = sM,
+                        durationMinutes = dur,
+                        workMinutes = obj.optInt("workMinutes", 50),
+                        breakMinutes = obj.optInt("breakMinutes", 0),
+                        enabled = obj.optBoolean("enabled", true),
+                        endHour = eH,
+                        endMinute = eM,
+                        hasLongBreak = obj.optBoolean("hasLongBreak", false),
+                    )
                 )
-            )
+            }
         }
         list
     }.getOrDefault(emptyList())
@@ -810,18 +861,20 @@ object FocusRepository {
         val arr = JSONArray(jsonStr)
         val list = mutableListOf<HistoryEntry>()
         for (i in 0 until arr.length()) {
-            val obj = arr.getJSONObject(i)
-            list.add(
-                HistoryEntry(
-                    id = obj.getString("id"),
-                    type = HistoryType.valueOf(obj.getString("type")),
-                    timestamp = obj.getLong("timestamp"),
-                    durationMinutes = obj.optInt("durationMinutes", 0),
-                    minutesRemaining = obj.optInt("minutesRemaining", 0),
-                    title = obj.optString("title", ""),
-                    text = obj.optString("text", ""),
+            runCatching {
+                val obj = arr.getJSONObject(i)
+                list.add(
+                    HistoryEntry(
+                        id = obj.getString("id"),
+                        type = HistoryType.valueOf(obj.getString("type")),
+                        timestamp = obj.getLong("timestamp"),
+                        durationMinutes = obj.optInt("durationMinutes", 0),
+                        minutesRemaining = obj.optInt("minutesRemaining", 0),
+                        title = obj.optString("title", ""),
+                        text = obj.optString("text", ""),
+                    )
                 )
-            )
+            }
         }
         list
     }.getOrDefault(emptyList())

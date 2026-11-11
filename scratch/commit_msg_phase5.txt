@@ -1,0 +1,16 @@
+fix(phase-5): resolve storage, validation, recurrence, and performance flaws
+
+- BUG-24: Add pre-export sync guard in FocusRepository.triggerExternalBackup checking ExternalBackupStorage.backupFileExists(); dispatch async backup sync on permission grant transition in HomeScreen
+- BUG-25: Harden parseSchedulesJson and parseHistoryJson with per-element runCatching in FocusRepository to prevent single corrupted record from destroying all schedules/history
+- BUG-26: Prevent free timer accumulation in EmergencyExitScreen by initializing lastActiveTypingElapsed to 0L and gating timer strictly on active typing with a 10s idle timeout
+- BUG-27: Decouple emergency exit autosave from targetSeconds threshold, saving draft text every 5s and on ON_STOP
+- BUG-28: Add FocusRepository.pastEmergencyExitEssays() strictly filtering HistoryType.EMERGENCY_EXIT for 100-word essay similarity
+- BUG-29: Clamp merged optional allowlist apps to MAX_OPTIONAL_ALLOWED_APPS = 5 during external backup sync
+- BUG-32: Clear stale expired sessions via clearExpiredSession(now) before starting manual or scheduled sessions
+- BUG-35: Prune stale milestones and skip records older than 14 days via FocusRepository.pruneStaleMilestonesAndSkips()
+- BUG-36: Scope 1-second countdown ticker to ActiveSessionCard and UpcomingSessionCard leaf composables, eliminating root HomeScreen recomposition churn
+- BUG-37: Remove Compose state mutation inside AndroidView.factory in DeskClockScreen; use onRelease callback to stop Chronometer
+- BUG-40: Register android.media.VOLUME_CHANGED_ACTION on applicationContext in AlarmPlayer while playing to mute alarm on volume key press
+- BUG-41: Launch BlockActivity on all active displays with ActivityOptions.setLaunchDisplayId() and configure singleTop + resizeableActivity to prevent DeX window thrashing
+- Anti-tampering: Enforce if (isModificationLocked()) return in syncWithExternalBackup to prevent external backup edits from altering active locks
+- Resilient backup: Support nullable BackupSnapshot parsing with fallback to atomic .tmp in ExternalBackupStorage

@@ -43,25 +43,20 @@ fun HomeScreen(
     val schedules by FocusRepository.schedules.collectAsState()
     val skippedOccurrences by FocusRepository.skippedOccurrences.collectAsState()
 
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var isStarted by remember { mutableStateOf(false) }
+    var lastAllFilesOn by remember { mutableStateOf(Permissions.hasAllFilesAccess()) }
 
     LifecycleEventEffect(Lifecycle.Event.ON_START) { isStarted = true }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { isStarted = false }
-
-    val hasSession = session != null
-    LaunchedEffect(isStarted, hasSession) {
-        if (!hasSession) {
-            now = System.currentTimeMillis()
-            return@LaunchedEffect
-        }
-        while (isStarted && session != null) {
-            now = System.currentTimeMillis()
-            delay(1_000L)
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        val currentAllFiles = Permissions.hasAllFilesAccess()
+        if (!lastAllFilesOn && currentAllFiles) {
+            lastAllFilesOn = true
+            FocusRepository.syncWithExternalBackupAsync(context)
         }
     }
 
-    val effNow = FocusRepository.effectiveNow(now)
+    val effNow = FocusRepository.effectiveNow()
     val active = session?.takeIf { it.isActive(effNow) }
 
     val usageStatsOn = remember(resumeTick) { Permissions.hasUsageStatsPermission(context) }
@@ -85,18 +80,19 @@ fun HomeScreen(
         if (active != null) {
             ActiveSessionCard(
                 session = active,
-                effNow = effNow,
                 allowlistSize = allowlist.size,
                 onOpenDeskClock = onOpenDeskClock,
                 onOpenEmergencyExit = onOpenEmergencyExit,
                 onUseRestToken = {
-                    FocusRepository.useRestToken(now)
+                    val nowMillis = System.currentTimeMillis()
+                    FocusRepository.useRestToken(nowMillis)
                     FocusService.start(context)
                     AlarmScheduler.scheduleNext(context)
                 },
                 onEndBreakEarly = {
+                    val nowMillis = System.currentTimeMillis()
                     AlarmPlayer.stop()
-                    FocusRepository.endBreakEarly(now)
+                    FocusRepository.endBreakEarly(nowMillis)
                     FocusService.start(context)
                     AlarmScheduler.scheduleNext(context)
                 },
@@ -143,13 +139,12 @@ fun HomeScreen(
                 )
             }
 
-            val upcoming = remember(schedules, skippedOccurrences, now) {
-                ScheduleCalculator.findNextOccurrence(schedules, skippedOccurrences, now)
+            val upcoming = remember(schedules, skippedOccurrences, resumeTick) {
+                ScheduleCalculator.findNextOccurrence(schedules, skippedOccurrences, System.currentTimeMillis())
             }
             if (upcoming != null) {
                 UpcomingSessionCard(
                     upcoming = upcoming,
-                    isLocked = FocusRepository.isModificationLocked(now),
                     onCancel = {
                         FocusRepository.deleteSchedule(upcoming.item.id)
                         AlarmScheduler.scheduleNext(context)
@@ -160,7 +155,7 @@ fun HomeScreen(
             StartSessionCard(
                 enabled = usageStatsOn && overlayOn,
                 onStartNow = { duration, work, breakMin, hasLongBreak ->
-                    FocusRepository.startSession(duration, work, breakMin, now, hasLongBreak)
+                    FocusRepository.startSession(duration, work, breakMin, System.currentTimeMillis(), hasLongBreak)
                     FocusService.start(context)
                 },
                 onScheduleFuture = { sH, sM, eH, eM, dur, w, b, longBreak ->
@@ -217,13 +212,24 @@ fun HomeScreen(
 @Composable
 private fun ActiveSessionCard(
     session: FocusSession,
-    effNow: Long,
     allowlistSize: Int,
     onOpenDeskClock: () -> Unit,
     onOpenEmergencyExit: () -> Unit,
     onUseRestToken: () -> Unit,
     onEndBreakEarly: () -> Unit,
 ) {
+    var effNow by remember { mutableLongStateOf(FocusRepository.effectiveNow()) }
+    var isStarted by remember { mutableStateOf(false) }
+    LifecycleEventEffect(Lifecycle.Event.ON_START) { isStarted = true }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { isStarted = false }
+
+    LaunchedEffect(isStarted, session) {
+        while (isStarted && session.isActive(FocusRepository.effectiveNow())) {
+            effNow = FocusRepository.effectiveNow()
+            delay(1_000L)
+        }
+    }
+
     val phase = session.currentPhase(effNow)
     val isBreak = phase == SessionPhase.BREAK
     var showConfirmEndBreak by remember { mutableStateOf(false) }
@@ -560,11 +566,23 @@ private fun StartSessionCard(
 @Composable
 private fun UpcomingSessionCard(
     upcoming: UpcomingOccurrence,
-    isLocked: Boolean,
     onCancel: () -> Unit,
 ) {
-    val remainingMs = (upcoming.startAtMillis - System.currentTimeMillis()).coerceAtLeast(0L)
+    var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var isStarted by remember { mutableStateOf(false) }
+    LifecycleEventEffect(Lifecycle.Event.ON_START) { isStarted = true }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { isStarted = false }
+
+    LaunchedEffect(isStarted, upcoming) {
+        while (isStarted) {
+            nowMillis = System.currentTimeMillis()
+            delay(1_000L)
+        }
+    }
+
+    val remainingMs = (upcoming.startAtMillis - nowMillis).coerceAtLeast(0L)
     val remMin = (remainingMs / 60_000L).toInt()
+    val isLocked = FocusRepository.isModificationLocked(nowMillis)
 
     Card(
         modifier = Modifier.fillMaxWidth(),

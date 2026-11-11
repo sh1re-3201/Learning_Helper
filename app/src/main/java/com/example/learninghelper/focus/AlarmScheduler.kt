@@ -28,6 +28,16 @@ object AlarmPlayer {
     private val autoStopRunnable = Runnable { stop() }
     private var audioFocusRequest: AudioFocusRequest? = null
     private var appContext: Context? = null
+    private var volumeReceiverRegistered = false
+
+    private val volumeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "android.media.VOLUME_CHANGED_ACTION") {
+                Log.i("AlarmPlayer", "Hardware volume key press detected, silencing alarm.")
+                stop()
+            }
+        }
+    }
 
     @Synchronized
     fun play(context: Context, soundUriString: String?, timeoutMs: Long = 45_000L) {
@@ -81,6 +91,19 @@ object AlarmPlayer {
                 prepare()
                 start()
             }
+
+            try {
+                val appCtx = context.applicationContext
+                val filter = android.content.IntentFilter("android.media.VOLUME_CHANGED_ACTION")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    appCtx.registerReceiver(volumeReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+                } else {
+                    appCtx.registerReceiver(volumeReceiver, filter)
+                }
+                volumeReceiverRegistered = true
+            } catch (e: Exception) {
+                Log.w("AlarmPlayer", "Could not register volumeReceiver", e)
+            }
         } catch (e: Exception) {
             Log.w("AlarmPlayer", "Failed to start alarm sound playback", e)
             stop()
@@ -91,6 +114,10 @@ object AlarmPlayer {
 
     @Synchronized
     fun stop() {
+        if (volumeReceiverRegistered) {
+            runCatching { appContext?.unregisterReceiver(volumeReceiver) }
+            volumeReceiverRegistered = false
+        }
         handler.removeCallbacks(autoStopRunnable)
         try {
             val am = appContext?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager

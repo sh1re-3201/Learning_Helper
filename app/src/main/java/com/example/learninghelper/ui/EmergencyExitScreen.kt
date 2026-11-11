@@ -45,8 +45,8 @@ fun EmergencyExitScreen(
     var isStarted by remember { mutableStateOf(false) }
     var validationError by remember { mutableStateOf<String?>(null) }
     var pasteWarning by remember { mutableStateOf(false) }
-    var lastActiveTypingElapsed by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
-    var isTypingActive by remember { mutableStateOf(true) }
+    var lastActiveTypingElapsed by remember { mutableLongStateOf(0L) }
+    var isTypingActive by remember { mutableStateOf(false) }
 
     LifecycleEventEffect(Lifecycle.Event.ON_START) { isStarted = true }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
@@ -55,16 +55,18 @@ fun EmergencyExitScreen(
     }
 
     LaunchedEffect(isStarted) {
+        var autoSaveTicks = 0
         while (isStarted) {
             delay(1_000L)
             val nowElapsed = SystemClock.elapsedRealtime()
-            val activelyTyping = (nowElapsed - lastActiveTypingElapsed) <= 20_000L
+            val activelyTyping = lastActiveTypingElapsed > 0L && (nowElapsed - lastActiveTypingElapsed) <= 10_000L
             isTypingActive = activelyTyping
             if (activelyTyping && elapsedSeconds < targetSeconds) {
                 elapsedSeconds++
-                if (elapsedSeconds % 5 == 0) {
-                    FocusRepository.saveEmergencyDraft(draft, elapsedSeconds)
-                }
+            }
+            autoSaveTicks++
+            if (autoSaveTicks % 5 == 0) {
+                FocusRepository.saveEmergencyDraft(draft, elapsedSeconds)
             }
         }
     }
@@ -167,7 +169,7 @@ fun EmergencyExitScreen(
 
         Button(
             onClick = {
-                val pastEssays = FocusRepository.history.value.map { it.text }.filter { it.isNotBlank() }
+                val pastEssays = FocusRepository.pastEmergencyExitEssays()
                 val result = EssayValidator.validate(draft, previousEssays = pastEssays, config = EssayConfig.EMERGENCY_EXIT)
                 if (result is EssayResult.Accepted) {
                     FocusRepository.emergencyExit(draft)
