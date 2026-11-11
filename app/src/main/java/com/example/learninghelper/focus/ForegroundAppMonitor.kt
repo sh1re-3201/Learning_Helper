@@ -52,7 +52,6 @@ object ForegroundAppMonitor {
     private var lastBlockAtElapsed = 0L
     @Volatile
     private var lastObservedPhase: SessionPhase? = null
-    private var workPhaseGrandfatherChecked = false
     private var lastCallNormalElapsed = 0L
     private var postCallRunnableScheduled = false
 
@@ -73,8 +72,7 @@ object ForegroundAppMonitor {
     private val postCallLockoutRunnable = Runnable {
         postCallRunnableScheduled = false
         val ctx = cachedContext ?: return@Runnable
-        val am = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-        val stillInCall = am?.mode == AudioManager.MODE_IN_CALL || am?.mode == AudioManager.MODE_IN_COMMUNICATION
+        val stillInCall = FocusNotificationListenerService.isCallActive(ctx)
         if (!stillInCall) {
             FocusRepository.setGrandfatheredCallPackage(null)
             lastCallNormalElapsed = 0L
@@ -142,7 +140,6 @@ object ForegroundAppMonitor {
         lastAllowedPhase = null
         lastKnownForegroundPackage = null
         lastObservedPhase = null
-        workPhaseGrandfatherChecked = false
         lastCallNormalElapsed = 0L
     }
 
@@ -227,7 +224,6 @@ object ForegroundAppMonitor {
                 lastKnownForegroundPackage = null
                 lastBlockAtElapsed = 0L
                 if (curPhase == SessionPhase.WORK) {
-                    workPhaseGrandfatherChecked = false
                     lastCallNormalElapsed = 0L
                 } else {
                     FocusRepository.setGrandfatheredCallPackage(null)
@@ -235,15 +231,20 @@ object ForegroundAppMonitor {
             }
 
             if (curPhase == SessionPhase.WORK) {
-                val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-                val inCall = audioManager?.mode == AudioManager.MODE_IN_CALL || audioManager?.mode == AudioManager.MODE_IN_COMMUNICATION
+                val inCall = FocusNotificationListenerService.isCallActive(context)
 
                 if (inCall) {
                     val currentGrandfathered = FocusRepository.grandfatheredCallPackage.value
                     if (currentGrandfathered.isNullOrBlank()) {
                         val activePkg = FocusNotificationListenerService.findActiveCallPackage()
-                        if (!activePkg.isNullOrBlank() && activePkg !in AppCatalog.ALWAYS_BLOCKED_DURING_SESSION) {
-                            FocusRepository.setGrandfatheredCallPackage(activePkg)
+                        val pkgToGrandfather = if (!activePkg.isNullOrBlank()) {
+                            activePkg
+                        } else {
+                            // Fallback if notification listener is unbound: inspect visible candidate
+                            candidatePackages.firstOrNull { it !in AppCatalog.STATIC_ALWAYS_ALLOWED && it !in AppCatalog.ALWAYS_BLOCKED_DURING_SESSION }
+                        }
+                        if (!pkgToGrandfather.isNullOrBlank() && pkgToGrandfather !in AppCatalog.ALWAYS_BLOCKED_DURING_SESSION) {
+                            FocusRepository.setGrandfatheredCallPackage(pkgToGrandfather)
                             lastAllowedPackage = null
                             lastAllowedPhase = null
                         }
@@ -281,7 +282,6 @@ object ForegroundAppMonitor {
         } else {
             lastObservedPhase = null
             lastAllowedPhase = null
-            workPhaseGrandfatherChecked = false
             lastCallNormalElapsed = 0L
             lastAllowedPackage = null
             FocusRepository.setGrandfatheredCallPackage(null)

@@ -1,0 +1,10 @@
+fix(inquisitor): resolve call guard, grace period, idempotency, and idle timeout oversights
+
+- Audio focus listener: Add OnAudioFocusChangeListener in AlarmPlayer to stop alarm playback immediately upon audio focus loss from incoming or cellular/VoIP calls
+- Canonical call detection: Introduce FocusNotificationListenerService.isCallActive(context) checking audio modes (IN_CALL, IN_COMMUNICATION, RINGTONE, CALL_SCREENING) and active CATEGORY_CALL notifications; unify call checks across AlarmPlayer, AlarmReceiver, and ForegroundAppMonitor
+- VoIP grandfathering fallback: In ForegroundAppMonitor.checkForeground, fall back to candidate package if notification listener is temporarily unbound during an active call, excluding tamper-sensitive packages
+- Code cleanup: Remove obsolete dead variable workPhaseGrandfatherChecked from ForegroundAppMonitor
+- PreSessionActivity idempotency: Guard onTimeReached with if (!FocusRepository.isFocusActive()) to prevent accidental session extensions when AlarmReceiver has already started the session at T-0
+- Wall-clock anchored grace period: Anchor pre-session grace period to absolute wall timestamp (graceEndsAtMillis) in PreSessionActivity, preventing frozen grace countdowns across screen off
+- Validated skip confirmation: Check boolean return of FocusRepository.skipOccurrence in PreSessionActivity; if false, display error message and start session
+- Emergency exit idle timeout: Align EmergencyExitScreen active typing idle threshold with UI copy and PLANS.md using TYPING_IDLE_TIMEOUT_MS = 20_000L

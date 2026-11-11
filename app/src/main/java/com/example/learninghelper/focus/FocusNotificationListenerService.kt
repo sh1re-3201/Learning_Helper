@@ -132,6 +132,24 @@ class FocusNotificationListenerService : NotificationListenerService() {
             return null
         }
 
+        fun isCallActive(context: Context): Boolean {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            val mode = audioManager?.mode ?: AudioManager.MODE_NORMAL
+            if (mode in setOf(
+                    AudioManager.MODE_IN_CALL,
+                    AudioManager.MODE_IN_COMMUNICATION,
+                    AudioManager.MODE_RINGTONE,
+                    AudioManager.MODE_CALL_SCREENING
+                )
+            ) {
+                return true
+            }
+            if (findActiveCallPackage() != null) {
+                return true
+            }
+            return false
+        }
+
         fun ensureRebound(context: Context) {
             if (instance?.get() == null) {
                 runCatching {

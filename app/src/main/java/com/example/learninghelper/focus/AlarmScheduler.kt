@@ -43,14 +43,11 @@ object AlarmPlayer {
     fun play(context: Context, soundUriString: String?, timeoutMs: Long = 45_000L) {
         stop()
 
-        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-        if (audioManager?.mode == AudioManager.MODE_IN_CALL ||
-            audioManager?.mode == AudioManager.MODE_IN_COMMUNICATION ||
-            audioManager?.mode == AudioManager.MODE_RINGTONE
-        ) {
+        if (FocusNotificationListenerService.isCallActive(context)) {
             Log.i("AlarmPlayer", "Call active or ringing; suppressing audible alarm.")
             return
         }
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         appContext = context.applicationContext
 
         try {
@@ -66,15 +63,26 @@ object AlarmPlayer {
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                 .build()
 
+            val focusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
+                if (focusChange == AudioManager.AUDIOFOCUS_LOSS ||
+                    focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT ||
+                    focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK
+                ) {
+                    Log.i("AlarmPlayer", "Audio focus lost ($focusChange); stopping alarm.")
+                    stop()
+                }
+            }
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
                     .setAudioAttributes(audioAttributes)
+                    .setOnAudioFocusChangeListener(focusChangeListener, handler)
                     .build()
                 audioFocusRequest = focusRequest
                 audioManager?.requestAudioFocus(focusRequest)
             } else {
                 @Suppress("DEPRECATION")
-                audioManager?.requestAudioFocus(null, AudioManager.STREAM_ALARM, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                audioManager?.requestAudioFocus(focusChangeListener, AudioManager.STREAM_ALARM, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
             }
 
             val soundUri = if (!soundUriString.isNullOrBlank()) {
@@ -245,10 +253,7 @@ class AlarmReceiver : BroadcastReceiver() {
                 FocusRepository.recordMilestoneFired("$occurrenceId:PRE_2M")
                 AlarmPlayer.play(context, FocusRepository.alarmSoundUri.value)
 
-                val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-                val inCall = audioManager?.mode == AudioManager.MODE_IN_CALL ||
-                    audioManager?.mode == AudioManager.MODE_IN_COMMUNICATION ||
-                    audioManager?.mode == AudioManager.MODE_RINGTONE
+                val inCall = FocusNotificationListenerService.isCallActive(context)
                 if (!inCall) {
                     val preIntent = PreSessionActivity.createIntent(
                         context, occurrenceId, title, startMillis, durationMin, workMin, breakMin, hasLongBreak = hasLongBreak

@@ -59,7 +59,7 @@ fun EmergencyExitScreen(
         while (isStarted) {
             delay(1_000L)
             val nowElapsed = SystemClock.elapsedRealtime()
-            val activelyTyping = lastActiveTypingElapsed > 0L && (nowElapsed - lastActiveTypingElapsed) <= 10_000L
+            val activelyTyping = lastActiveTypingElapsed > 0L && (nowElapsed - lastActiveTypingElapsed) <= TYPING_IDLE_TIMEOUT_MS
             isTypingActive = activelyTyping
             if (activelyTyping && elapsedSeconds < targetSeconds) {
                 elapsedSeconds++
@@ -186,3 +186,5 @@ fun EmergencyExitScreen(
         }
     }
 }
+
+private const val TYPING_IDLE_TIMEOUT_MS = 20_000L
