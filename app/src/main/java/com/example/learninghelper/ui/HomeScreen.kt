@@ -91,7 +91,7 @@ fun HomeScreen(
                 onOpenEmergencyExit = onOpenEmergencyExit,
                 onUseRestToken = {
                     FocusRepository.useRestToken(now)
-                    FocusService.triggerBreakAlert(context)
+                    FocusService.start(context)
                     AlarmScheduler.scheduleNext(context)
                 },
                 onEndBreakEarly = {

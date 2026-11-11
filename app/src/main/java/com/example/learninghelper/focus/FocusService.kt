@@ -104,7 +104,9 @@ class FocusService : Service() {
         val effNow = FocusRepository.effectiveNow(now)
         val phase = session.currentPhase(effNow)
 
-        val isEnteringBreak = forceBreakAlert || (lastObservedPhase == SessionPhase.WORK && phase == SessionPhase.BREAK)
+        // Only sound the break arrival alert for timed/scheduled breaks, not for manually triggered Rest Token breaks
+        val isEnteringBreak = (forceBreakAlert || (lastObservedPhase == SessionPhase.WORK && phase == SessionPhase.BREAK)) &&
+            !session.isRestTokenBreak(effNow)
 
         if (isEnteringBreak) {
             AlarmPlayer.play(this, FocusRepository.alarmSoundUri.value, timeoutMs = 15_000L)
