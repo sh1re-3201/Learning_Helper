@@ -196,7 +196,7 @@ fun DeskClockScreen(
             )
             if (isBreak) {
                 Text(
-                    text = "BREAK TIME ☕",
+                    text = "BREAK TIME",
                     color = Color(0xFFBFDBFE),
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,

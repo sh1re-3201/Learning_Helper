@@ -17,11 +17,11 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.Chronometer
 import android.widget.LinearLayout
-import android.widget.TextView
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.example.learninghelper.data.FocusRepository
@@ -32,7 +32,6 @@ class FocusService : Service() {
     private var windowManager: WindowManager? = null
     private var overlayView: View? = null
     private var chronometer: Chronometer? = null
-    private var statusTextView: TextView? = null
     private var isScreenOn = true
     private var didVibrateWarning = false
     private var lastObservedPhase: SessionPhase? = null
@@ -105,7 +104,9 @@ class FocusService : Service() {
         val effNow = FocusRepository.effectiveNow(now)
         val phase = session.currentPhase(effNow)
 
-        val isEnteringBreak = forceBreakAlert || (lastObservedPhase == SessionPhase.WORK && phase == SessionPhase.BREAK)
+        // Only sound the break arrival alert for timed/scheduled breaks, not for manually triggered Rest Token breaks
+        val isEnteringBreak = (forceBreakAlert || (lastObservedPhase == SessionPhase.WORK && phase == SessionPhase.BREAK)) &&
+            !session.isRestTokenBreak(effNow)
 
         if (isEnteringBreak) {
             AlarmPlayer.play(this, FocusRepository.alarmSoundUri.value, timeoutMs = 15_000L)
@@ -178,20 +179,25 @@ class FocusService : Service() {
                 val padH = (8 * density).toInt()
                 val padV = (2 * density).toInt()
                 setPadding(padH, padV, padH, padV)
+                alpha = 0.55f
                 background = GradientDrawable().apply {
                     setColor(Color.parseColor("#E6059669")) // Emerald green 90%
                     cornerRadius = 12 * density
                 }
+                setOnTouchListener { v, event ->
+                    when (event.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> {
+                            v.animate().alpha(1.0f).setDuration(120L).start()
+                            true
+                        }
+                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                            v.animate().alpha(0.55f).setDuration(250L).start()
+                            true
+                        }
+                        else -> false
+                    }
+                }
             }
-
-            val icon = TextView(this).apply {
-                text = "☕ "
-                textSize = 11f
-                setTypeface(null, android.graphics.Typeface.BOLD)
-                setTextColor(Color.WHITE)
-            }
-            container.addView(icon)
-            statusTextView = icon
 
             val chrono = Chronometer(this).apply {
                 textSize = 11f
@@ -207,15 +213,12 @@ class FocusService : Service() {
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT,
             ).apply {
-                gravity = Gravity.TOP or Gravity.START
-                x = (68 * density).toInt()
-                y = (4 * density).toInt()
-                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                gravity = Gravity.BOTTOM or Gravity.START
+                x = 0
+                y = (20 * density).toInt()
             }
 
             try {
@@ -225,7 +228,6 @@ class FocusService : Service() {
                 Log.w(TAG, "Could not add break overlay", e)
                 chronometer?.stop()
                 chronometer = null
-                statusTextView = null
                 overlayView = null
                 return
             }
@@ -249,8 +251,6 @@ class FocusService : Service() {
             setColor(if (isTenSecWarning) Color.parseColor("#E6D97706") else Color.parseColor("#E6059669"))
             cornerRadius = 12 * density
         }
-
-        statusTextView?.text = if (isTenSecWarning) "🔒 " else "☕ "
 
         if (isTenSecWarning && !didVibrateWarning) {
             didVibrateWarning = true
@@ -295,7 +295,6 @@ class FocusService : Service() {
         }
         overlayView = null
         chronometer = null
-        statusTextView = null
         didVibrateWarning = false
     }
 

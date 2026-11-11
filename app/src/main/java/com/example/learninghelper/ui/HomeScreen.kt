@@ -2,7 +2,6 @@ package com.example.learninghelper.ui
 
 import android.Manifest
 import android.app.TimePickerDialog
-import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -92,7 +91,7 @@ fun HomeScreen(
                 onOpenEmergencyExit = onOpenEmergencyExit,
                 onUseRestToken = {
                     FocusRepository.useRestToken(now)
-                    FocusService.triggerBreakAlert(context)
+                    FocusService.start(context)
                     AlarmScheduler.scheduleNext(context)
                 },
                 onEndBreakEarly = {
@@ -262,21 +261,17 @@ private fun ActiveSessionCard(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                if (isBreak) "☕ Break Time" else "🔒 Focus Mode Active",
+                if (isBreak) "Break Time" else "Focus Mode Active",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
             )
 
-            CircularProgressIndicator(
-                progress = { 1f - session.progress(effNow) },
-                modifier = Modifier.size(140.dp),
-                strokeWidth = 10.dp,
-            )
-
-            Text(
-                FocusPolicy.formatDuration(session.remainingMillis(effNow)),
-                fontSize = 42.sp,
-                fontWeight = FontWeight.Light,
+            AnalogStopwatchDial(
+                progress = session.progress(effNow),
+                timeFormatted = FocusPolicy.formatDuration(session.remainingMillis(effNow)),
+                phaseLabel = if (isBreak) "BREAK" else "FOCUS",
+                isBreak = isBreak,
+                dialSize = 210.dp,
             )
 
             Text(
@@ -286,7 +281,7 @@ private fun ActiveSessionCard(
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onOpenDeskClock) {
-                    Text("🕒 Desk Clock (AOD)")
+                    Text("Desk Clock (AOD)")
                 }
                 if (session.canUseRestToken(effNow)) {
                     OutlinedButton(onClick = onUseRestToken) {
@@ -578,7 +573,7 @@ private fun UpcomingSessionCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    "📅 Upcoming Focus Session",
+                    "Upcoming Focus Session",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onPrimaryContainer,

@@ -8,7 +8,7 @@
     <!-- Academic Mortarboard Cap (Top) -->
     <path
         android:pathData="M56,58 C65,68 95,68 104,58 L104,64 C95,74 65,74 56,64 Z"
-        android:fillColor="#4338CA" />
+        android:fillColor="#6E6E6E" />
 
     <!-- Mortarboard Diamond Flat Top -->
     <path
@@ -20,8 +20,8 @@
                 android:endX="122"
                 android:endY="68"
                 android:type="linear">
-                <item android:offset="0.0" android:color="#818CF8" />
-                <item android:offset="1.0" android:color="#6366F1" />
+                <item android:offset="0.0" android:color="#F5F5F5" />
+                <item android:offset="1.0" android:color="#BDBDBD" />
             </gradient>
         </aapt:attr>
     </path>
@@ -30,20 +30,20 @@
     <path
         android:pathData="M80,52 C65,55 50,61 47,72"
         android:strokeWidth="2.8"
-        android:strokeColor="#F59E0B"
+        android:strokeColor="#9E9E9E"
         android:strokeLineCap="round" />
     <path
         android:pathData="M47,72 L44,84 L51,84 L48,72 Z"
-        android:fillColor="#FBBF24" />
+        android:fillColor="#D6D6D6" />
     <path
         android:pathData="M80,52m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0"
-        android:fillColor="#FDE68A" />
+        android:fillColor="#F0F0F0" />
 
     <!-- Security Lock Shackle -->
     <path
         android:pathData="M65,94 V79 C65,70.5 95,70.5 95,79 V94"
         android:strokeWidth="6"
-        android:strokeColor="#E2E8F0"
+        android:strokeColor="#E6E6E6"
         android:strokeLineCap="round" />
 
     <!-- Lock Body / Shield -->
@@ -56,8 +56,8 @@
                 android:endX="111"
                 android:endY="129"
                 android:type="linear">
-                <item android:offset="0.0" android:color="#38BDF8" />
-                <item android:offset="1.0" android:color="#0284C7" />
+                <item android:offset="0.0" android:color="#E0E0E0" />
+                <item android:offset="1.0" android:color="#8A8A8A" />
             </gradient>
         </aapt:attr>
     </path>
@@ -65,8 +65,8 @@
     <!-- Inner Keyhole -->
     <path
         android:pathData="M80,102m-4.2,0a4.2,4.2 0,1 1,8.4 0a4.2,4.2 0,1 1,-8.4 0"
-        android:fillColor="#0F172A" />
+        android:fillColor="#000000" />
     <path
         android:pathData="M78,104 L76.5,115 H83.5 L82,104 Z"
-        android:fillColor="#0F172A" />
+        android:fillColor="#000000" />
 </vector>

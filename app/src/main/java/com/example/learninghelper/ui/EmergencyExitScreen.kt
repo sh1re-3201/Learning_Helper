@@ -10,7 +10,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -22,6 +21,7 @@ import com.example.learninghelper.focus.EssayConfig
 import com.example.learninghelper.focus.EssayResult
 import com.example.learninghelper.focus.EssayValidator
 import com.example.learninghelper.focus.FocusPolicy
+import com.example.learninghelper.ui.theme.MonoSuccess
 import kotlinx.coroutines.delay
 
 @Composable
@@ -83,7 +83,7 @@ fun EmergencyExitScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFF0F172A))
+            .background(MaterialTheme.colorScheme.background)
             .imePadding()
             .verticalScroll(scrollState)
             .padding(20.dp),
@@ -91,19 +91,19 @@ fun EmergencyExitScreen(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onCancel) { Text("← Return") }
-            Text("Emergency Exit", style = MaterialTheme.typography.titleLarge, color = Color.White, fontWeight = FontWeight.Bold)
+            Text("Emergency Exit", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
         }
 
         Card(
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("⚠️ High Friction Exit Requirements", color = Color(0xFFF59E0B), fontWeight = FontWeight.SemiBold)
+                Text("High Friction Exit Requirements", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
                 Text(
                     "1. Write a 100-word essay explaining why you need to quit now.\n" +
                     "2. Active typing timer: minimum $minWritingMinutes minutes (pauses after 20s idle).",
-                    color = Color(0xFFCBD5E1),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 14.sp,
                 )
             }
@@ -115,7 +115,7 @@ fun EmergencyExitScreen(
         ) {
             Text(
                 "Words: $wordsCount / 100",
-                color = if (wordsCount >= 100) Color(0xFF10B981) else Color(0xFF94A3B8),
+                color = if (wordsCount >= 100) MonoSuccess else MaterialTheme.colorScheme.onSurfaceVariant,
                 fontWeight = FontWeight.Medium,
             )
             val timerText = when {
@@ -125,7 +125,7 @@ fun EmergencyExitScreen(
             }
             Text(
                 timerText,
-                color = if (timeRemainingSec == 0) Color(0xFF10B981) else if (!isTypingActive) Color(0xFFF59E0B) else Color(0xFF38BDF8),
+                color = if (timeRemainingSec == 0) MonoSuccess else if (!isTypingActive) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.Medium,
             )
         }
@@ -152,12 +152,12 @@ fun EmergencyExitScreen(
                 }
             },
             modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 240.dp),
-            placeholder = { Text("Write your honest explanation here...", color = Color.Gray) },
+            placeholder = { Text("Write your honest explanation here...", color = MaterialTheme.colorScheme.outline) },
             colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = Color.White,
-                unfocusedTextColor = Color.White,
-                focusedBorderColor = Color(0xFF6366F1),
-                unfocusedBorderColor = Color(0xFF334155),
+                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
             ),
         )
 
@@ -178,7 +178,7 @@ fun EmergencyExitScreen(
             },
             enabled = canSubmit,
             modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
         ) {
             Text("Unlock & Exit Focus", modifier = Modifier.padding(vertical = 4.dp))
         }

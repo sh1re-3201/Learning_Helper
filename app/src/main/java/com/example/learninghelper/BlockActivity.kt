@@ -164,8 +164,6 @@ private fun BlockScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Text("🔒", fontSize = 48.sp)
-        Spacer(Modifier.height(12.dp))
         Text(
             "$blockedLabel is locked",
             color = Color.White,
@@ -243,7 +241,7 @@ private fun BlockScreen(
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF38BDF8)),
             ) {
-                Text("🕒 Desk Clock (AOD)")
+                Text("Desk Clock (AOD)")
             }
             Spacer(Modifier.height(8.dp))
             OutlinedButton(

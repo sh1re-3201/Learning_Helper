@@ -15,7 +15,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -24,6 +23,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import com.example.learninghelper.data.FocusRepository
 import com.example.learninghelper.focus.Permissions
+import com.example.learninghelper.ui.theme.MonoSuccess
+import com.example.learninghelper.ui.theme.MonoSuccessContainer
 
 @Composable
 fun SettingsScreen(
@@ -74,7 +75,7 @@ fun SettingsScreen(
 
         if (isLocked) {
             Text(
-                "🔒 Settings cannot be modified during active focus or right before a scheduled session.",
+                "Settings cannot be modified during active focus or right before a scheduled session.",
                 color = MaterialTheme.colorScheme.error,
                 fontSize = 12.sp,
             )
@@ -190,8 +191,8 @@ private fun PermissionRow(
         if (isGranted) {
             Surface(
                 shape = MaterialTheme.shapes.small,
-                color = Color(0xFF10B981).copy(alpha = 0.15f),
-                contentColor = Color(0xFF10B981),
+                color = MonoSuccessContainer,
+                contentColor = MonoSuccess,
                 modifier = Modifier.clickable(onClick = onClick),
             ) {
                 Text(
