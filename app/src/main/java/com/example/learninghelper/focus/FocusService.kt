@@ -143,7 +143,7 @@ class FocusService : Service() {
 
     private fun scheduleCheck(delayMs: Long) {
         handler.removeCallbacks(checkRunnable)
-        handler.postDelayed(checkRunnable, delayMs.coerceIn(1_000L, 60_000L))
+        handler.postDelayed(checkRunnable, delayMs.coerceIn(50L, 60_000L))
     }
 
     private fun checkSession() {

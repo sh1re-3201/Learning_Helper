@@ -23,7 +23,7 @@ object ForegroundAppMonitor {
 
     private const val CHECK_INTERVAL_MS = 400L
     private const val DEBOUNCE_MS = 400L
-    private const val LOOKBACK_SWEEP_MS = 15 * 60_000L
+    private const val LOOKBACK_SWEEP_MS = 45 * 60_000L
 
     private val monitorThread = HandlerThread("ForegroundAppMonitorThread").apply { start() }
     private val backgroundHandler = Handler(monitorThread.looper)
@@ -38,6 +38,7 @@ object ForegroundAppMonitor {
     private var alwaysAllowed: Set<String> = emptySet()
     private var lastAlwaysAllowedRefresh = 0L
     private var lastAllowedPackage: String? = null
+    private var lastAllowedPhase: SessionPhase? = null
     private var lastKnownForegroundPackage: String? = null
     private var lastBlockAtElapsed = 0L
     private var lastObservedPhase: SessionPhase? = null
@@ -54,6 +55,7 @@ object ForegroundAppMonitor {
             FocusRepository.setGrandfatheredCallPackage(null)
             lastCallNormalElapsed = 0L
             lastAllowedPackage = null
+            lastAllowedPhase = null
             lastKnownForegroundPackage = null
             enforceCurrentWindows(ctx)
         }
@@ -96,6 +98,7 @@ object ForegroundAppMonitor {
         backgroundHandler.removeCallbacks(postCallLockoutRunnable)
         postCallRunnableScheduled = false
         lastAllowedPackage = null
+        lastAllowedPhase = null
         lastKnownForegroundPackage = null
         lastObservedPhase = null
         workPhaseGrandfatherChecked = false
@@ -126,6 +129,8 @@ object ForegroundAppMonitor {
     fun enforceCurrentWindows(context: Context? = null) {
         val ctx = context?.applicationContext ?: cachedContext ?: return
         lastKnownForegroundPackage = null
+        lastAllowedPackage = null
+        lastAllowedPhase = null
         backgroundHandler.post {
             checkForeground(ctx, isImmediateSweep = true)
         }
@@ -161,6 +166,10 @@ object ForegroundAppMonitor {
             val curPhase = session.currentPhase(effNow)
             if (curPhase != lastObservedPhase) {
                 lastObservedPhase = curPhase
+                lastAllowedPackage = null
+                lastAllowedPhase = null
+                lastKnownForegroundPackage = null
+                lastBlockAtElapsed = 0L
                 if (curPhase == SessionPhase.WORK) {
                     workPhaseGrandfatherChecked = false
                     lastCallNormalElapsed = 0L
@@ -203,6 +212,7 @@ object ForegroundAppMonitor {
                             FocusRepository.setGrandfatheredCallPackage(null)
                             lastCallNormalElapsed = 0L
                             lastAllowedPackage = null
+                            lastAllowedPhase = null
                             lastKnownForegroundPackage = null
                         }
                     } else {
@@ -216,6 +226,7 @@ object ForegroundAppMonitor {
             }
         } else {
             lastObservedPhase = null
+            lastAllowedPhase = null
             workPhaseGrandfatherChecked = false
             lastCallNormalElapsed = 0L
             lastAllowedPackage = null
@@ -224,7 +235,12 @@ object ForegroundAppMonitor {
 
         val grandfatheredCallPkg = FocusRepository.grandfatheredCallPackage.value
 
-        if (candidatePackages.size == 1 && candidatePackages.first() == lastAllowedPackage && !inPreSession) {
+        val currentPhase = if (session != null && session.isActive(effNow)) session.currentPhase(effNow) else null
+        if (candidatePackages.size == 1 &&
+            candidatePackages.first() == lastAllowedPackage &&
+            currentPhase == lastAllowedPhase &&
+            !inPreSession
+        ) {
             return
         }
 
@@ -242,6 +258,7 @@ object ForegroundAppMonitor {
 
             if (block) {
                 lastAllowedPackage = null
+                lastAllowedPhase = null
                 lastKnownForegroundPackage = null
                 if (elapsed - lastBlockAtElapsed > DEBOUNCE_MS) {
                     lastBlockAtElapsed = elapsed
@@ -255,6 +272,7 @@ object ForegroundAppMonitor {
                 break
             } else {
                 lastAllowedPackage = pkg
+                lastAllowedPhase = currentPhase
             }
         }
     }
@@ -301,7 +319,7 @@ object ForegroundAppMonitor {
         try {
             val stats = usm.queryUsageStats(
                 UsageStatsManager.INTERVAL_DAILY,
-                nowWall - 15_000L,
+                nowWall - 60 * 60_000L,
                 nowWall,
             )
             stats?.maxByOrNull { it.lastTimeUsed }?.packageName?.let {

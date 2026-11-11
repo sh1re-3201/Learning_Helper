@@ -108,11 +108,11 @@ class AlarmReceiver : BroadcastReceiver() {
             ACTION_PHASE_BOUNDARY -> {
                 val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
                 val wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LearningHelper:PhaseBoundaryWakeLock")
-                wakeLock?.acquire(15_000L)
+                wakeLock?.acquire(10_000L)
                 try {
                     FocusService.evaluateCurrentPhase(context)
-                } finally {
-                    runCatching { if (wakeLock?.isHeld == true) wakeLock.release() }
+                } catch (e: Exception) {
+                    Log.w("AlarmReceiver", "Could not evaluate phase boundary", e)
                 }
                 AlarmScheduler.scheduleNext(context)
             }
