@@ -140,11 +140,26 @@ class AlarmReceiver : BroadcastReceiver() {
                 val wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LearningHelper:PhaseBoundaryWakeLock")
                 wakeLock?.acquire(10_000L)
                 try {
-                    FocusService.evaluateCurrentPhase(context)
+                    val activeSession = FocusRepository.activeSession()
+                    if (activeSession != null) {
+                        FocusService.evaluateCurrentPhase(context)
+                    } else {
+                        val completed = FocusRepository.clearExpiredSession()
+                        if (completed != null) {
+                            FocusNotifications.showComplete(context, completed)
+                        }
+                        FocusService.stop(context)
+                    }
+                    AlarmScheduler.scheduleNext(context)
                 } catch (e: Exception) {
                     Log.w("AlarmReceiver", "Could not evaluate phase boundary", e)
+                } finally {
+                    try {
+                        if (wakeLock?.isHeld == true) wakeLock.release()
+                    } catch (e: Exception) {
+                        Log.w("AlarmReceiver", "Error releasing wakelock", e)
+                    }
                 }
-                AlarmScheduler.scheduleNext(context)
             }
             ACTION_PRE_5M -> {
                 if (FocusRepository.isFocusActive()) {
@@ -213,7 +228,34 @@ class AlarmReceiver : BroadcastReceiver() {
                     ).apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                     }
-                    context.startActivity(preIntent)
+                    val pendingPre = PendingIntent.getActivity(
+                        context,
+                        101,
+                        preIntent,
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                    )
+                    // Full-screen intent notification compliant with Android 14 BAL over Keyguard
+                    if (FocusNotifications.canPost(context)) {
+                        val notif = NotificationCompat.Builder(context, FocusNotifications.CHANNEL_ALARMS)
+                            .setSmallIcon(R.drawable.ic_stat_focus)
+                            .setContentTitle("Focus Session Starting in 2 Minutes")
+                            .setContentText("$title begins at scheduled time.")
+                            .setPriority(NotificationCompat.PRIORITY_MAX)
+                            .setCategory(NotificationCompat.CATEGORY_ALARM)
+                            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                            .setFullScreenIntent(pendingPre, true)
+                            .setAutoCancel(true)
+                            .setContentIntent(pendingPre)
+                            .build()
+                        runCatching {
+                            context.getSystemService(NotificationManager::class.java).notify(FocusNotifications.ID_PRE_SESSION, notif)
+                        }
+                    }
+                    try {
+                        context.startActivity(preIntent)
+                    } catch (e: Exception) {
+                        Log.w("AlarmReceiver", "Direct startActivity deferred to full-screen intent", e)
+                    }
                 } else {
                     // Call in progress or ringing: update the pre-session notification in notification tray
                     if (FocusNotifications.canPost(context)) {
@@ -240,17 +282,30 @@ class AlarmReceiver : BroadcastReceiver() {
                 AlarmScheduler.scheduleNext(context)
             }
             ACTION_START -> {
-                AlarmPlayer.stop()
-                val nm = context.getSystemService(NotificationManager::class.java)
-                nm.cancel(FocusNotifications.ID_PRE_SESSION)
+                val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+                val wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LearningHelper:SessionStartWakeLock")
+                wakeLock?.acquire(10_000L)
+                try {
+                    AlarmPlayer.stop()
+                    val nm = context.getSystemService(NotificationManager::class.java)
+                    nm.cancel(FocusNotifications.ID_PRE_SESSION)
 
-                FocusRepository.recordMilestoneFired("$occurrenceId:START")
-                if (occurrenceId !in FocusRepository.skippedOccurrences.value) {
-                    FocusRepository.startSession(durationMin, workMin, breakMin, hasLongBreak = hasLongBreak)
-                    FocusService.start(context)
-                    ForegroundAppMonitor.enforceCurrentWindows(context)
+                    FocusRepository.recordMilestoneFired("$occurrenceId:START")
+                    if (occurrenceId !in FocusRepository.skippedOccurrences.value) {
+                        FocusRepository.startSession(durationMin, workMin, breakMin, hasLongBreak = hasLongBreak)
+                        FocusService.start(context)
+                        ForegroundAppMonitor.enforceCurrentWindows(context)
+                    }
+                    AlarmScheduler.scheduleNext(context)
+                } finally {
+                    try {
+                        if (wakeLock?.isHeld == true) {
+                            wakeLock.release()
+                        }
+                    } catch (e: Exception) {
+                        Log.w("AlarmReceiver", "Error releasing wakelock", e)
+                    }
                 }
-                AlarmScheduler.scheduleNext(context)
             }
         }
     }

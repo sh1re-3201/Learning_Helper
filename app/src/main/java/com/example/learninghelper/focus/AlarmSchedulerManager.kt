@@ -4,6 +4,7 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import com.example.learninghelper.data.FocusRepository
 
 object AlarmScheduler {
@@ -31,21 +32,25 @@ object AlarmScheduler {
         if (activeSession != null) {
             val effNow = FocusRepository.effectiveNow(now)
             val phaseEndAt = activeSession.phaseEndAt(effNow)
-            if (phaseEndAt > now) {
+            val remainingMs = (phaseEndAt - effNow).coerceAtLeast(0L)
+            if (remainingMs > 0L) {
+                val triggerElapsed = SystemClock.elapsedRealtime() + remainingMs
                 try {
                     am.setExactAndAllowWhileIdle(
-                        AlarmManager.RTC_WAKEUP,
-                        phaseEndAt,
+                        AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                        triggerElapsed,
                         phasePending,
                     )
                 } catch (e: SecurityException) {
-                    am.set(AlarmManager.RTC_WAKEUP, phaseEndAt, phasePending)
+                    am.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerElapsed, phasePending)
                 }
             } else {
                 am.cancel(phasePending)
+                phasePending.cancel()
             }
         } else {
             am.cancel(phasePending)
+            phasePending.cancel()
         }
 
         // 2. Schedule upcoming pre-session / session start milestone
@@ -56,17 +61,8 @@ object AlarmScheduler {
             nowMillis = now,
         )
 
-        val schedPending = PendingIntent.getBroadcast(
-            context,
-            REQUEST_CODE_SCHEDULED,
-            Intent(context, AlarmReceiver::class.java),
-            PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE,
-        )
-
         if (nextTrigger == null) {
-            if (schedPending != null) {
-                am.cancel(schedPending)
-            }
+            cancelScheduledMilestoneAlarms(context, am)
             return
         }
 
@@ -75,6 +71,23 @@ object AlarmScheduler {
             ScheduleMilestone.PRE_5M -> AlarmReceiver.ACTION_PRE_5M
             ScheduleMilestone.PRE_2M -> AlarmReceiver.ACTION_PRE_2M
             ScheduleMilestone.START -> AlarmReceiver.ACTION_START
+        }
+
+        // Cancel any pending milestone alarms that don't match the current milestone action
+        for (act in ALL_SCHEDULED_ACTIONS) {
+            if (act != action) {
+                val otherIntent = Intent(context, AlarmReceiver::class.java).apply { this.action = act }
+                val otherPi = PendingIntent.getBroadcast(
+                    context,
+                    REQUEST_CODE_SCHEDULED,
+                    otherIntent,
+                    PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE,
+                )
+                if (otherPi != null) {
+                    am.cancel(otherPi)
+                    otherPi.cancel()
+                }
+            }
         }
 
         val intent = Intent(context, AlarmReceiver::class.java).apply {
@@ -103,6 +116,46 @@ object AlarmScheduler {
             )
         } catch (e: SecurityException) {
             am.set(AlarmManager.RTC_WAKEUP, nextTrigger.triggerAtMillis, pendingIntent)
+        }
+    }
+
+    private val ALL_SCHEDULED_ACTIONS = listOf(
+        AlarmReceiver.ACTION_PRE_5M,
+        AlarmReceiver.ACTION_PRE_2M,
+        AlarmReceiver.ACTION_START,
+    )
+
+    fun cancelScheduledMilestoneAlarms(context: Context, am: AlarmManager? = null) {
+        val alarmManager = am ?: context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        for (act in ALL_SCHEDULED_ACTIONS) {
+            val intent = Intent(context, AlarmReceiver::class.java).apply { action = act }
+            val pi = PendingIntent.getBroadcast(
+                context,
+                REQUEST_CODE_SCHEDULED,
+                intent,
+                PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE,
+            )
+            if (pi != null) {
+                alarmManager.cancel(pi)
+                pi.cancel()
+            }
+        }
+    }
+
+    fun cancelPhaseAlarm(context: Context) {
+        val am = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        val phaseIntent = Intent(context, AlarmReceiver::class.java).apply {
+            action = AlarmReceiver.ACTION_PHASE_BOUNDARY
+        }
+        val phasePending = PendingIntent.getBroadcast(
+            context,
+            REQUEST_CODE_PHASE_BOUNDARY,
+            phaseIntent,
+            PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE,
+        )
+        if (phasePending != null) {
+            am.cancel(phasePending)
+            phasePending.cancel()
         }
     }
 }

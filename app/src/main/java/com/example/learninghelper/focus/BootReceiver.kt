@@ -19,6 +19,16 @@ class BootReceiver : BroadcastReceiver() {
                     FocusService.start(context)
                 } else {
                     FocusRepository.clearExpiredSession()
+                    val ongoing = ScheduleCalculator.findOngoingOccurrence(
+                        items = FocusRepository.schedules.value,
+                        skippedOccurrenceIds = FocusRepository.skippedOccurrences.value,
+                        nowMillis = System.currentTimeMillis(),
+                    )
+                    if (ongoing != null) {
+                        FocusRepository.startScheduledSession(ongoing)
+                        FocusService.start(context)
+                        ForegroundAppMonitor.enforceCurrentWindows(context)
+                    }
                 }
                 AlarmScheduler.scheduleNext(context)
             }

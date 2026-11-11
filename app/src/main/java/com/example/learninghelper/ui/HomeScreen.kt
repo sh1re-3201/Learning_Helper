@@ -184,8 +184,12 @@ fun HomeScreen(
                         breakMinutes = b,
                         hasLongBreak = longBreak,
                     )
-                    FocusRepository.upsertSchedule(item)
-                    AlarmScheduler.scheduleNext(context)
+                    if (ScheduleCalculator.hasOverlap(FocusRepository.schedules.value, item)) {
+                        android.widget.Toast.makeText(context, "Cannot schedule: routine overlaps with an existing routine", android.widget.Toast.LENGTH_SHORT).show()
+                    } else {
+                        FocusRepository.upsertSchedule(item)
+                        AlarmScheduler.scheduleNext(context)
+                    }
                 },
             )
 

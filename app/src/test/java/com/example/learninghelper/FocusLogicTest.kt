@@ -8,6 +8,7 @@ import org.junit.Assert.*
 import org.junit.Test
 import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
 
@@ -217,10 +218,12 @@ class FocusLogicTest {
 
         // T - 3m: inside lock window
         assertTrue(ScheduleCalculator.isInPreSessionLockWindow(items, emptySet(), startMillis - 3 * 60_000L, zone))
-        // T + 30s: inside lock window due to +60s typing grace period!
+        // T + 30s: inside lock window due to typing grace period
         assertTrue(ScheduleCalculator.isInPreSessionLockWindow(items, emptySet(), startMillis + 30_000L, zone))
-        // T + 70s: past grace period, lock window closed
-        assertFalse(ScheduleCalculator.isInPreSessionLockWindow(items, emptySet(), startMillis + 70_000L, zone))
+        // T + 70s: still inside 75s grace period buffer
+        assertTrue(ScheduleCalculator.isInPreSessionLockWindow(items, emptySet(), startMillis + 70_000L, zone))
+        // T + 80s: past grace period, lock window closed
+        assertFalse(ScheduleCalculator.isInPreSessionLockWindow(items, emptySet(), startMillis + 80_000L, zone))
     }
 
     @Test
@@ -786,5 +789,147 @@ class FocusLogicTest {
             grandfatheredCallPackage = "com.microsoft.teams",
         )
         assertTrue("Distracting apps must remain blocked while VoIP call is active", instaBlocked)
+    }
+
+    @Test
+    fun testWeeklyRecurrenceSearchBeyondEightDays() {
+        val zone = ZoneId.of("UTC")
+        // Schedule runs only on Mondays at 10:00
+        val mondayItem = ScheduledItem(
+            id = "mon_routine",
+            label = "Monday Routine",
+            type = ScheduleType.WEEKLY,
+            daysOfWeek = setOf(DayOfWeek.MONDAY),
+            startHour = 10,
+            startMinute = 0,
+            durationMinutes = 60,
+        )
+        // Set today to Tuesday, Oct 27, 2026
+        val tuesdayZdt = ZonedDateTime.of(2026, 10, 27, 12, 0, 0, 0, zone)
+        val nowMillis = tuesdayZdt.toInstant().toEpochMilli()
+
+        // Next Monday is Nov 2 (dayOffset = 6). Suppose Nov 2 is skipped!
+        val nextMondayOccId = ScheduleCalculator.occurrenceIdFor(
+            LocalDate.of(2026, 11, 2),
+            LocalTime.of(10, 0),
+        )
+        val skipped = setOf(nextMondayOccId)
+
+        // The following Monday is Nov 9 (dayOffset = 13, which is > 8 days).
+        val upcoming = ScheduleCalculator.findNextOccurrence(
+            items = listOf(mondayItem),
+            skippedOccurrenceIds = skipped,
+            nowMillis = nowMillis,
+            zoneId = zone,
+        )
+        assertNotNull("Must find occurrence beyond 8 days when earlier occurrence is skipped", upcoming)
+        assertEquals("2026-11-09T10:00", upcoming?.occurrenceId)
+    }
+
+    @Test
+    fun testOvernightOngoingOccurrenceDetection() {
+        val zone = ZoneId.of("UTC")
+        // Schedule runs on Monday nights from 23:30 to 01:30 (120 min duration)
+        val overnightItem = ScheduledItem(
+            id = "night_owl",
+            label = "Overnight Routine",
+            type = ScheduleType.WEEKLY,
+            daysOfWeek = setOf(DayOfWeek.MONDAY),
+            startHour = 23,
+            startMinute = 30,
+            durationMinutes = 120,
+        )
+        // Device reboots on Tuesday morning at 00:30 (inside the overnight session)
+        val tuesdayEarly = ZonedDateTime.of(2026, 10, 27, 0, 30, 0, 0, zone)
+        val rebootTimeMillis = tuesdayEarly.toInstant().toEpochMilli()
+
+        val ongoing = ScheduleCalculator.findOngoingOccurrence(
+            items = listOf(overnightItem),
+            skippedOccurrenceIds = emptySet(),
+            nowMillis = rebootTimeMillis,
+            zoneId = zone,
+        )
+        assertNotNull("Overnight session crossing midnight must be detected as ongoing on Tuesday 00:30", ongoing)
+        assertEquals("2026-10-26T23:30", ongoing?.occurrenceId)
+        assertEquals(overnightItem.id, ongoing?.item?.id)
+
+        // At 01:35 on Tuesday, session has completed and should not be detected
+        val afterEnd = ZonedDateTime.of(2026, 10, 27, 1, 35, 0, 0, zone).toInstant().toEpochMilli()
+        val noneOngoing = ScheduleCalculator.findOngoingOccurrence(
+            items = listOf(overnightItem),
+            skippedOccurrenceIds = emptySet(),
+            nowMillis = afterEnd,
+            zoneId = zone,
+        )
+        assertNull("Completed overnight session must not be ongoing", noneOngoing)
+    }
+
+    @Test
+    fun testScheduleOverlapDetectionWeeklyAndCalendar() {
+        // Schedule 1: Mon, Wed, Fri 10:00 - 11:30 (90m)
+        val item1 = ScheduledItem(
+            id = "s1",
+            label = "Morning MWF",
+            type = ScheduleType.WEEKLY,
+            daysOfWeek = setOf(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY, DayOfWeek.FRIDAY),
+            startHour = 10,
+            startMinute = 0,
+            durationMinutes = 90,
+        )
+        // Schedule 2: Monday 11:00 - 12:00 (overlaps with item1 on Monday 11:00-11:30)
+        val item2 = ScheduledItem(
+            id = "s2",
+            label = "Monday Overlap",
+            type = ScheduleType.WEEKLY,
+            daysOfWeek = setOf(DayOfWeek.MONDAY),
+            startHour = 11,
+            startMinute = 0,
+            durationMinutes = 60,
+        )
+        assertTrue(ScheduleCalculator.doSchedulesOverlap(item1, item2))
+
+        // Schedule 3: Tuesday 10:00 - 11:30 (disjoint days from item1)
+        val item3 = ScheduledItem(
+            id = "s3",
+            label = "Tuesday Clear",
+            type = ScheduleType.WEEKLY,
+            daysOfWeek = setOf(DayOfWeek.TUESDAY),
+            startHour = 10,
+            startMinute = 0,
+            durationMinutes = 90,
+        )
+        assertFalse(ScheduleCalculator.doSchedulesOverlap(item1, item3))
+
+        // Schedule 4: Monday 11:30 - 12:30 (adjacent, touching boundary, non-overlapping)
+        val item4 = ScheduledItem(
+            id = "s4",
+            label = "Adjacent",
+            type = ScheduleType.WEEKLY,
+            daysOfWeek = setOf(DayOfWeek.MONDAY),
+            startHour = 11,
+            startMinute = 30,
+            durationMinutes = 60,
+        )
+        assertFalse(ScheduleCalculator.doSchedulesOverlap(item1, item4))
+
+        // Schedule 5: Calendar date on a Wednesday (2026-10-28 is Wednesday) at 10:30
+        val item5 = ScheduledItem(
+            id = "s5",
+            label = "Calendar Wednesday",
+            type = ScheduleType.CALENDAR_DATE,
+            year = 2026,
+            month = 10,
+            dayOfMonth = 28,
+            startHour = 10,
+            startMinute = 30,
+            durationMinutes = 45,
+        )
+        // With nowMillis before the date:
+        val beforeDate = ZonedDateTime.of(2026, 10, 28, 8, 0, 0, 0, ZoneId.of("UTC")).toInstant().toEpochMilli()
+        assertTrue("Future calendar routine on Wednesday 10:30 must overlap with MWF 10:00-11:30", ScheduleCalculator.doSchedulesOverlap(item1, item5, nowMillis = beforeDate, zoneId = ZoneId.of("UTC")))
+
+        // With nowMillis AFTER the date (expired):
+        val afterDate = ZonedDateTime.of(2026, 10, 29, 8, 0, 0, 0, ZoneId.of("UTC")).toInstant().toEpochMilli()
+        assertFalse("Past expired calendar routine must NOT block future MWF routine", ScheduleCalculator.doSchedulesOverlap(item1, item5, nowMillis = afterDate, zoneId = ZoneId.of("UTC")))
     }
 }

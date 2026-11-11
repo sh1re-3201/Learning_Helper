@@ -62,6 +62,8 @@ class MainActivity : ComponentActivity() {
                         SCREEN_EMERGENCY_EXIT -> EmergencyExitScreen(
                             onExitSuccess = {
                                 FocusService.stop(this@MainActivity)
+                                com.example.learninghelper.focus.AlarmScheduler.cancelPhaseAlarm(this@MainActivity)
+                                com.example.learninghelper.focus.AlarmScheduler.scheduleNext(this@MainActivity)
                                 currentScreen = SCREEN_HOME
                             },
                             onCancel = { currentScreen = SCREEN_HOME },

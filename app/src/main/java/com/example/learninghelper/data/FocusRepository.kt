@@ -342,6 +342,46 @@ object FocusRepository {
     }
 
     @Synchronized
+    fun startScheduledSession(
+        occurrence: com.example.learninghelper.focus.UpcomingOccurrence,
+        now: Long = System.currentTimeMillis(),
+    ): FocusSession {
+        val current = activeSession(now)
+        if (current != null) return current
+
+        val session = FocusPolicy.createSession(
+            now = occurrence.startAtMillis,
+            durationMinutes = occurrence.item.durationMinutes,
+            workMinutes = occurrence.item.workMinutes,
+            breakMinutes = occurrence.item.breakMinutes,
+            hasLongBreak = occurrence.item.hasLongBreak,
+        )
+        val accumulated = (now - occurrence.startAtMillis).coerceAtLeast(0L)
+        prefs.edit()
+            .putLong(KEY_START, session.startAt)
+            .putLong(KEY_END, session.endAt)
+            .putInt(KEY_WORK_MIN, session.workMinutes)
+            .putInt(KEY_BREAK_MIN, session.breakMinutes)
+            .putBoolean(KEY_HAS_LONG_BREAK, session.hasLongBreak)
+            .putLong(KEY_REST_START, 0L)
+            .putLong(KEY_REST_END, 0L)
+            .putLong(KEY_ACCUMULATED_ELAPSED, accumulated)
+            .putLong(KEY_ANCHOR_ELAPSED, SystemClock.elapsedRealtime())
+            .putLong(KEY_ANCHOR_WALL, now)
+            .putInt(KEY_ANCHOR_BOOT_COUNT, getBootCount())
+            .remove(KEY_EMERGENCY_DRAFT)
+            .remove(KEY_EMERGENCY_ELAPSED_SEC)
+            .putLong(KEY_EMERGENCY_SESSION_START, session.startAt)
+            .remove(KEY_EARLY_ENDED_BREAKS)
+            .commit()
+
+        _session.value = session
+        _emergencyDraftText.value = ""
+        _emergencyElapsedSeconds.value = 0
+        return session
+    }
+
+    @Synchronized
     fun useRestToken(now: Long = System.currentTimeMillis()): Boolean {
         val current = activeSession(now) ?: return false
         val effNow = effectiveNow(now)
@@ -409,8 +449,8 @@ object FocusRepository {
         scheduledStartMillis: Long,
         now: Long = System.currentTimeMillis(),
     ): Boolean {
-        // Allows skipping prior to start or within the one-time +60s grace period extension
-        if (now > scheduledStartMillis + 60_000L) return false
+        // Allows skipping prior to start or within the one-time +60s grace period extension (with 15s latency buffer)
+        if (now > scheduledStartMillis + 75_000L) return false
 
         // If a session auto-started at T-0 while the user was actively typing a skip reason,
         // clear that session and stop FocusService immediately.
@@ -480,6 +520,9 @@ object FocusRepository {
         _emergencyDraftText.value = ""
         _emergencyElapsedSeconds.value = 0
         _grandfatheredCallPackage.value = null
+        if (::appContext.isInitialized) {
+            com.example.learninghelper.focus.AlarmScheduler.cancelPhaseAlarm(appContext)
+        }
     }
 
     fun optionalAllowedCount(current: Set<String> = _allowlist.value): Int =
