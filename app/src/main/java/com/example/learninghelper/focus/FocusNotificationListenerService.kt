@@ -3,6 +3,8 @@ package com.example.learninghelper.focus
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.app.Notification
+import android.content.Context
+import android.media.AudioManager
 import android.util.Log
 import com.example.learninghelper.data.FocusRepository
 import java.lang.ref.WeakReference
@@ -131,6 +133,14 @@ class FocusNotificationListenerService : NotificationListenerService() {
                 service.requestInterruptionFilter(filter)
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to set interruption filter", e)
+            }
+        }
+
+        fun resetInterruptionFilterFailsafe(context: Context) {
+            if (!FocusRepository.isDeskClockActive.value) {
+                setInterruptionFilter(NotificationListenerService.INTERRUPTION_FILTER_ALL)
+                val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                runCatching { am?.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, AudioManager.ADJUST_UNMUTE, 0) }
             }
         }
 

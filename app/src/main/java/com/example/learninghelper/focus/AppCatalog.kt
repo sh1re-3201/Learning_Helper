@@ -38,6 +38,7 @@ object AppCatalog {
 
     val STATIC_ALWAYS_ALLOWED = setOf(
         "android",
+        "com.android.settings", // Always permitted for system settings and uninstallation
         "com.android.systemui",
         "com.android.server.telecom",
         "com.android.phone",

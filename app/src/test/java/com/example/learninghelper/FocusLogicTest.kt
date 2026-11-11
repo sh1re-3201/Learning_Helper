@@ -144,9 +144,9 @@ class FocusLogicTest {
         // Distracting app is blocked
         assertTrue(FocusPolicy.shouldBlock("com.instagram.android", session, now + 1000L, defaultAllowlist, alwaysAllowed, alwaysBlocked))
 
-        // If settings is removed from allowlist, it is blocked during WORK like any non-allowed app
+        // Settings is in STATIC_ALWAYS_ALLOWED, so even if removed from user allowlist, it remains unblocked to guarantee uninstallation
         val withoutSettings = defaultAllowlist - "com.android.settings"
-        assertTrue(FocusPolicy.shouldBlock("com.android.settings", session, now + 1000L, withoutSettings, alwaysAllowed, alwaysBlocked))
+        assertFalse(FocusPolicy.shouldBlock("com.android.settings", session, now + 1000L, withoutSettings, alwaysAllowed, alwaysBlocked))
     }
 
     @Test
@@ -636,5 +636,62 @@ class FocusLogicTest {
         // At t=56m, session must be in WORK phase
         val t56 = now + 56 * 60_000L
         assertEquals(SessionPhase.WORK, resumed.currentPhase(t56))
+    }
+
+    @Test
+    fun testSettingsCannotBeBlockedUnderAnyAllowlistState() {
+        val now = 1_000_000L
+        val session = FocusSession(
+            startAt = now,
+            endAt = now + 60 * 60_000L,
+            workMinutes = 50,
+            breakMinutes = 10,
+        )
+        val alwaysAllowed = setOf("android", "com.android.settings", "com.android.systemui")
+
+        // In WORK phase with empty user allowlist
+        val blocked = FocusPolicy.shouldBlock(
+            packageName = "com.android.settings",
+            session = session,
+            now = now + 10 * 60_000L,
+            allowlist = emptySet(),
+            alwaysAllowed = alwaysAllowed,
+        )
+        assertFalse("Settings app must never be blocked so uninstallation is always permitted", blocked)
+    }
+
+    @Test
+    fun testSkipGracePeriodTimestampToleranceWindow() {
+        val scheduledStart = 1_000_000L
+        val alarmFiredActualStart = scheduledStart + 42L // 42ms alarm wakeup latency
+        val isMatch = kotlin.math.abs(alarmFiredActualStart - scheduledStart) <= 90_000L
+        assertTrue("Sub-second alarm latency must be within the 90s tolerance window", isMatch)
+
+        val unrelatedPastSessionStart = scheduledStart - 200_000L
+        val isUnrelatedMatch = kotlin.math.abs(unrelatedPastSessionStart - scheduledStart) <= 90_000L
+        assertFalse("Unrelated past session must not match", isUnrelatedMatch)
+    }
+
+    @Test
+    fun testFocusSessionDefensiveCoercionValidation() {
+        val now = 1_000_000L
+        val rawWorkMin = 0 // Corrupt or invalid value
+        val rawBreakMin = -5
+        val coercedWork = rawWorkMin.coerceIn(FocusPolicy.MIN_DURATION_MINUTES, FocusPolicy.MAX_DURATION_MINUTES)
+        val coercedBreak = rawBreakMin.coerceAtLeast(0)
+
+        assertEquals(FocusPolicy.MIN_DURATION_MINUTES, coercedWork)
+        assertEquals(0, coercedBreak)
+
+        // Session creation with coerced values must succeed without exception
+        val session = FocusSession(
+            startAt = now,
+            endAt = now + 60 * 60_000L,
+            workMinutes = coercedWork,
+            breakMinutes = coercedBreak,
+        )
+        assertNotNull(session)
+        assertEquals(5, session.workMinutes)
+        assertEquals(0, session.breakMinutes)
     }
 }

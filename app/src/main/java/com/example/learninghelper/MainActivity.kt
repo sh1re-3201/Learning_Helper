@@ -12,6 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import com.example.learninghelper.data.FocusRepository
 import com.example.learninghelper.focus.AlarmScheduler
+import com.example.learninghelper.focus.FocusNotificationListenerService
 import com.example.learninghelper.focus.FocusService
 import com.example.learninghelper.ui.*
 import com.example.learninghelper.ui.theme.LearningHelperTheme
@@ -110,6 +111,11 @@ class MainActivity : ComponentActivity() {
             FocusRepository.clearExpiredSession()
         }
         AlarmScheduler.scheduleNext(this)
+    }
+
+    override fun onDestroy() {
+        FocusNotificationListenerService.resetInterruptionFilterFailsafe(this)
+        super.onDestroy()
     }
 
     companion object {

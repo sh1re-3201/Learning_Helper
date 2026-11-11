@@ -90,7 +90,7 @@ fun DeskClockScreen(
             runCatching { audioManager?.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, AudioManager.ADJUST_MUTE, 0) }
         }
         FocusRepository.setDeskClockActive(true)
-        FocusNotificationListenerService.setInterruptionFilter(NotificationListenerService.INTERRUPTION_FILTER_ALARMS)
+        FocusNotificationListenerService.setInterruptionFilter(NotificationListenerService.INTERRUPTION_FILTER_PRIORITY)
         FocusNotificationListenerService.sweepDistractions()
 
         onDispose {

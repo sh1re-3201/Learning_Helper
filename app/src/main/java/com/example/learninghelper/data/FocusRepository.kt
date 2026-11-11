@@ -155,39 +155,45 @@ object FocusRepository {
     }
 
     private fun restoreSession() {
-        val start = prefs.getLong(KEY_START, 0L)
-        val end = prefs.getLong(KEY_END, 0L)
-        if (start > 0L && end > start) {
-            val workMin = prefs.getInt(KEY_WORK_MIN, 50)
-            val breakMin = prefs.getInt(KEY_BREAK_MIN, 0)
-            val hasLongBreak = prefs.getBoolean(KEY_HAS_LONG_BREAK, false)
-            val restStart = prefs.getLong(KEY_REST_START, 0L)
-            val restEnd = prefs.getLong(KEY_REST_END, 0L)
-            val earlyBreakStr = prefs.getString(KEY_EARLY_ENDED_BREAKS, "") ?: ""
-            val earlyBreaks = if (earlyBreakStr.isNotBlank()) {
-                earlyBreakStr.split(',').mapNotNull { it.trim().toLongOrNull() }.toSet()
+        runCatching {
+            val start = prefs.getLong(KEY_START, 0L)
+            val end = prefs.getLong(KEY_END, 0L)
+            if (start > 0L && end > start) {
+                val rawWork = prefs.getInt(KEY_WORK_MIN, 50)
+                val workMin = rawWork.coerceIn(com.example.learninghelper.focus.FocusPolicy.MIN_DURATION_MINUTES, com.example.learninghelper.focus.FocusPolicy.MAX_DURATION_MINUTES)
+                val breakMin = prefs.getInt(KEY_BREAK_MIN, 0).coerceAtLeast(0)
+                val hasLongBreak = prefs.getBoolean(KEY_HAS_LONG_BREAK, false)
+                val restStart = prefs.getLong(KEY_REST_START, 0L)
+                val restEnd = prefs.getLong(KEY_REST_END, 0L)
+                val earlyBreakStr = prefs.getString(KEY_EARLY_ENDED_BREAKS, "") ?: ""
+                val earlyBreaks = if (earlyBreakStr.isNotBlank()) {
+                    earlyBreakStr.split(',').mapNotNull { it.trim().toLongOrNull() }.toSet()
+                } else {
+                    emptySet()
+                }
+                _session.value = FocusSession(
+                    startAt = start,
+                    endAt = end,
+                    workMinutes = workMin,
+                    breakMinutes = breakMin,
+                    restBreakStartAt = restStart,
+                    restBreakEndAt = restEnd,
+                    hasLongBreak = hasLongBreak,
+                    earlyEndedBreakStarts = earlyBreaks,
+                )
+                val draftStart = prefs.getLong(KEY_EMERGENCY_SESSION_START, 0L)
+                if (draftStart == start) {
+                    _emergencyDraftText.value = prefs.getString(KEY_EMERGENCY_DRAFT, "") ?: ""
+                    _emergencyElapsedSeconds.value = prefs.getInt(KEY_EMERGENCY_ELAPSED_SEC, 0)
+                } else {
+                    _emergencyDraftText.value = ""
+                    _emergencyElapsedSeconds.value = 0
+                }
             } else {
-                emptySet()
+                _session.value = null
             }
-            _session.value = FocusSession(
-                startAt = start,
-                endAt = end,
-                workMinutes = workMin,
-                breakMinutes = breakMin,
-                restBreakStartAt = restStart,
-                restBreakEndAt = restEnd,
-                hasLongBreak = hasLongBreak,
-                earlyEndedBreakStarts = earlyBreaks,
-            )
-            val draftStart = prefs.getLong(KEY_EMERGENCY_SESSION_START, 0L)
-            if (draftStart == start) {
-                _emergencyDraftText.value = prefs.getString(KEY_EMERGENCY_DRAFT, "") ?: ""
-                _emergencyElapsedSeconds.value = prefs.getInt(KEY_EMERGENCY_ELAPSED_SEC, 0)
-            } else {
-                _emergencyDraftText.value = ""
-                _emergencyElapsedSeconds.value = 0
-            }
-        } else {
+        }.onFailure {
+            clearActiveSessionInternal()
             _session.value = null
         }
     }
@@ -371,7 +377,7 @@ object FocusRepository {
         // clear that session and stop FocusService immediately.
         if (isFocusActive(now)) {
             val active = activeSession(now)
-            if (active != null && active.startAt == scheduledStartMillis) {
+            if (active != null && kotlin.math.abs(active.startAt - scheduledStartMillis) <= 90_000L) {
                 clearActiveSessionInternal()
                 if (::appContext.isInitialized) {
                     com.example.learninghelper.focus.FocusService.stop(appContext)
