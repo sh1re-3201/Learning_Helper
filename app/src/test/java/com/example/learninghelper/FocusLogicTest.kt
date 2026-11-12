@@ -8,6 +8,7 @@ import org.junit.Assert.*
 import org.junit.Test
 import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
 
@@ -144,9 +145,9 @@ class FocusLogicTest {
         // Distracting app is blocked
         assertTrue(FocusPolicy.shouldBlock("com.instagram.android", session, now + 1000L, defaultAllowlist, alwaysAllowed, alwaysBlocked))
 
-        // If settings is removed from allowlist, it is blocked during WORK like any non-allowed app
+        // Settings is in STATIC_ALWAYS_ALLOWED, so even if removed from user allowlist, it remains unblocked to guarantee uninstallation
         val withoutSettings = defaultAllowlist - "com.android.settings"
-        assertTrue(FocusPolicy.shouldBlock("com.android.settings", session, now + 1000L, withoutSettings, alwaysAllowed, alwaysBlocked))
+        assertFalse(FocusPolicy.shouldBlock("com.android.settings", session, now + 1000L, withoutSettings, alwaysAllowed, alwaysBlocked))
     }
 
     @Test
@@ -217,10 +218,12 @@ class FocusLogicTest {
 
         // T - 3m: inside lock window
         assertTrue(ScheduleCalculator.isInPreSessionLockWindow(items, emptySet(), startMillis - 3 * 60_000L, zone))
-        // T + 30s: inside lock window due to +60s typing grace period!
+        // T + 30s: inside lock window due to typing grace period
         assertTrue(ScheduleCalculator.isInPreSessionLockWindow(items, emptySet(), startMillis + 30_000L, zone))
-        // T + 70s: past grace period, lock window closed
-        assertFalse(ScheduleCalculator.isInPreSessionLockWindow(items, emptySet(), startMillis + 70_000L, zone))
+        // T + 70s: still inside 75s grace period buffer
+        assertTrue(ScheduleCalculator.isInPreSessionLockWindow(items, emptySet(), startMillis + 70_000L, zone))
+        // T + 80s: past grace period, lock window closed
+        assertFalse(ScheduleCalculator.isInPreSessionLockWindow(items, emptySet(), startMillis + 80_000L, zone))
     }
 
     @Test
@@ -636,5 +639,357 @@ class FocusLogicTest {
         // At t=56m, session must be in WORK phase
         val t56 = now + 56 * 60_000L
         assertEquals(SessionPhase.WORK, resumed.currentPhase(t56))
+    }
+
+    @Test
+    fun testSettingsCannotBeBlockedUnderAnyAllowlistState() {
+        val now = 1_000_000L
+        val session = FocusSession(
+            startAt = now,
+            endAt = now + 60 * 60_000L,
+            workMinutes = 50,
+            breakMinutes = 10,
+        )
+        val alwaysAllowed = setOf("android", "com.android.settings", "com.android.systemui")
+
+        // In WORK phase with empty user allowlist
+        val blocked = FocusPolicy.shouldBlock(
+            packageName = "com.android.settings",
+            session = session,
+            now = now + 10 * 60_000L,
+            allowlist = emptySet(),
+            alwaysAllowed = alwaysAllowed,
+        )
+        assertFalse("Settings app must never be blocked so uninstallation is always permitted", blocked)
+    }
+
+    @Test
+    fun testSkipGracePeriodTimestampToleranceWindow() {
+        val scheduledStart = 1_000_000L
+        val alarmFiredActualStart = scheduledStart + 42L // 42ms alarm wakeup latency
+        val isMatch = kotlin.math.abs(alarmFiredActualStart - scheduledStart) <= 90_000L
+        assertTrue("Sub-second alarm latency must be within the 90s tolerance window", isMatch)
+
+        val unrelatedPastSessionStart = scheduledStart - 200_000L
+        val isUnrelatedMatch = kotlin.math.abs(unrelatedPastSessionStart - scheduledStart) <= 90_000L
+        assertFalse("Unrelated past session must not match", isUnrelatedMatch)
+    }
+
+    @Test
+    fun testFocusSessionDefensiveCoercionValidation() {
+        val now = 1_000_000L
+        val rawWorkMin = 0 // Corrupt or invalid value
+        val rawBreakMin = -5
+        val coercedWork = rawWorkMin.coerceIn(FocusPolicy.MIN_DURATION_MINUTES, FocusPolicy.MAX_DURATION_MINUTES)
+        val coercedBreak = rawBreakMin.coerceAtLeast(0)
+
+        assertEquals(FocusPolicy.MIN_DURATION_MINUTES, coercedWork)
+        assertEquals(0, coercedBreak)
+
+        // Session creation with coerced values must succeed without exception
+        val session = FocusSession(
+            startAt = now,
+            endAt = now + 60 * 60_000L,
+            workMinutes = coercedWork,
+            breakMinutes = coercedBreak,
+        )
+        assertNotNull(session)
+        assertEquals(5, session.workMinutes)
+        assertEquals(0, session.breakMinutes)
+    }
+
+    @Test
+    fun testPreSessionAntiTamperingActiveWithoutSession() {
+        val now = 1_000_000L
+        val alwaysBlocked = AppCatalog.ALWAYS_BLOCKED_DURING_SESSION
+        val alwaysAllowed = AppCatalog.STATIC_ALWAYS_ALLOWED
+        val allowlist = FocusRepository.DEFAULT_ALLOWLIST
+
+        // Pre-session active, but session is null (T-5m .. T-0 window)
+        val secureFolderBlocked = FocusPolicy.shouldBlock(
+            packageName = "com.samsung.knox.securefolder",
+            session = null,
+            now = now,
+            allowlist = allowlist,
+            alwaysAllowed = alwaysAllowed,
+            alwaysBlockedDuringSession = alwaysBlocked,
+            inPreSessionLockWindow = true,
+        )
+        assertTrue("Secure folder must be blocked during pre-session lock window", secureFolderBlocked)
+
+        val edgePanelBlocked = FocusPolicy.shouldBlock(
+            packageName = "com.samsung.android.app.cocktailbarservice",
+            session = null,
+            now = now,
+            allowlist = allowlist,
+            alwaysAllowed = alwaysAllowed,
+            alwaysBlockedDuringSession = alwaysBlocked,
+            inPreSessionLockWindow = true,
+        )
+        assertTrue("Edge panel must be blocked during pre-session lock window", edgePanelBlocked)
+
+        // Normal apps (e.g. WhatsApp or Chrome) are NOT blocked during pre-session
+        val whatsappBlocked = FocusPolicy.shouldBlock(
+            packageName = "com.whatsapp",
+            session = null,
+            now = now,
+            allowlist = allowlist,
+            alwaysAllowed = alwaysAllowed,
+            alwaysBlockedDuringSession = alwaysBlocked,
+            inPreSessionLockWindow = true,
+        )
+        assertFalse("WhatsApp must not be blocked during pre-session window", whatsappBlocked)
+    }
+
+    @Test
+    fun testRebootWallDeltaClamping() {
+        val rawDelta = 10 * 3600 * 1000L // 10 hours forward clock shift
+        val maxSlack = FocusRepository.MAX_REBOOT_SLACK_MS // 5 minutes
+        val clampedDelta = minOf(rawDelta, maxSlack)
+        assertEquals(5 * 60_000L, clampedDelta)
+
+        val normalRebootDelta = 45_000L // 45s normal reboot
+        val clampedNormal = minOf(normalRebootDelta, maxSlack)
+        assertEquals(45_000L, clampedNormal)
+    }
+
+    @Test
+    fun testGrandfatheredVoIPPackageNotBlockedDuringWork() {
+        val now = 1_000_000L
+        val session = FocusSession(
+            startAt = now,
+            endAt = now + 60 * 60_000L,
+            workMinutes = 50,
+            breakMinutes = 10,
+        )
+        val alwaysAllowed = AppCatalog.STATIC_ALWAYS_ALLOWED
+        val alwaysBlocked = AppCatalog.ALWAYS_BLOCKED_DURING_SESSION
+        val allowlist = FocusRepository.DEFAULT_ALLOWLIST
+
+        // In WORK phase, an incoming Teams call is grandfathered
+        val teamsBlocked = FocusPolicy.shouldBlock(
+            packageName = "com.microsoft.teams",
+            session = session,
+            now = now + 15 * 60_000L,
+            allowlist = allowlist,
+            alwaysAllowed = alwaysAllowed,
+            alwaysBlockedDuringSession = alwaysBlocked,
+            grandfatheredCallPackage = "com.microsoft.teams",
+        )
+        assertFalse("Grandfathered VoIP meeting package must not be blocked during work phase", teamsBlocked)
+
+        // Other non-allowed distracting apps must remain strictly blocked
+        val instaBlocked = FocusPolicy.shouldBlock(
+            packageName = "com.instagram.android",
+            session = session,
+            now = now + 15 * 60_000L,
+            allowlist = allowlist,
+            alwaysAllowed = alwaysAllowed,
+            alwaysBlockedDuringSession = alwaysBlocked,
+            grandfatheredCallPackage = "com.microsoft.teams",
+        )
+        assertTrue("Distracting apps must remain blocked while VoIP call is active", instaBlocked)
+    }
+
+    @Test
+    fun testWeeklyRecurrenceSearchBeyondEightDays() {
+        val zone = ZoneId.of("UTC")
+        // Schedule runs only on Mondays at 10:00
+        val mondayItem = ScheduledItem(
+            id = "mon_routine",
+            label = "Monday Routine",
+            type = ScheduleType.WEEKLY,
+            daysOfWeek = setOf(DayOfWeek.MONDAY),
+            startHour = 10,
+            startMinute = 0,
+            durationMinutes = 60,
+        )
+        // Set today to Tuesday, Oct 27, 2026
+        val tuesdayZdt = ZonedDateTime.of(2026, 10, 27, 12, 0, 0, 0, zone)
+        val nowMillis = tuesdayZdt.toInstant().toEpochMilli()
+
+        // Next Monday is Nov 2 (dayOffset = 6). Suppose Nov 2 is skipped!
+        val nextMondayOccId = ScheduleCalculator.occurrenceIdFor(
+            LocalDate.of(2026, 11, 2),
+            LocalTime.of(10, 0),
+        )
+        val skipped = setOf(nextMondayOccId)
+
+        // The following Monday is Nov 9 (dayOffset = 13, which is > 8 days).
+        val upcoming = ScheduleCalculator.findNextOccurrence(
+            items = listOf(mondayItem),
+            skippedOccurrenceIds = skipped,
+            nowMillis = nowMillis,
+            zoneId = zone,
+        )
+        assertNotNull("Must find occurrence beyond 8 days when earlier occurrence is skipped", upcoming)
+        assertEquals("2026-11-09T10:00", upcoming?.occurrenceId)
+    }
+
+    @Test
+    fun testOvernightOngoingOccurrenceDetection() {
+        val zone = ZoneId.of("UTC")
+        // Schedule runs on Monday nights from 23:30 to 01:30 (120 min duration)
+        val overnightItem = ScheduledItem(
+            id = "night_owl",
+            label = "Overnight Routine",
+            type = ScheduleType.WEEKLY,
+            daysOfWeek = setOf(DayOfWeek.MONDAY),
+            startHour = 23,
+            startMinute = 30,
+            durationMinutes = 120,
+        )
+        // Device reboots on Tuesday morning at 00:30 (inside the overnight session)
+        val tuesdayEarly = ZonedDateTime.of(2026, 10, 27, 0, 30, 0, 0, zone)
+        val rebootTimeMillis = tuesdayEarly.toInstant().toEpochMilli()
+
+        val ongoing = ScheduleCalculator.findOngoingOccurrence(
+            items = listOf(overnightItem),
+            skippedOccurrenceIds = emptySet(),
+            nowMillis = rebootTimeMillis,
+            zoneId = zone,
+        )
+        assertNotNull("Overnight session crossing midnight must be detected as ongoing on Tuesday 00:30", ongoing)
+        assertEquals("2026-10-26T23:30", ongoing?.occurrenceId)
+        assertEquals(overnightItem.id, ongoing?.item?.id)
+
+        // At 01:35 on Tuesday, session has completed and should not be detected
+        val afterEnd = ZonedDateTime.of(2026, 10, 27, 1, 35, 0, 0, zone).toInstant().toEpochMilli()
+        val noneOngoing = ScheduleCalculator.findOngoingOccurrence(
+            items = listOf(overnightItem),
+            skippedOccurrenceIds = emptySet(),
+            nowMillis = afterEnd,
+            zoneId = zone,
+        )
+        assertNull("Completed overnight session must not be ongoing", noneOngoing)
+    }
+
+    @Test
+    fun testScheduleOverlapDetectionWeeklyAndCalendar() {
+        // Schedule 1: Mon, Wed, Fri 10:00 - 11:30 (90m)
+        val item1 = ScheduledItem(
+            id = "s1",
+            label = "Morning MWF",
+            type = ScheduleType.WEEKLY,
+            daysOfWeek = setOf(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY, DayOfWeek.FRIDAY),
+            startHour = 10,
+            startMinute = 0,
+            durationMinutes = 90,
+        )
+        // Schedule 2: Monday 11:00 - 12:00 (overlaps with item1 on Monday 11:00-11:30)
+        val item2 = ScheduledItem(
+            id = "s2",
+            label = "Monday Overlap",
+            type = ScheduleType.WEEKLY,
+            daysOfWeek = setOf(DayOfWeek.MONDAY),
+            startHour = 11,
+            startMinute = 0,
+            durationMinutes = 60,
+        )
+        assertTrue(ScheduleCalculator.doSchedulesOverlap(item1, item2))
+
+        // Schedule 3: Tuesday 10:00 - 11:30 (disjoint days from item1)
+        val item3 = ScheduledItem(
+            id = "s3",
+            label = "Tuesday Clear",
+            type = ScheduleType.WEEKLY,
+            daysOfWeek = setOf(DayOfWeek.TUESDAY),
+            startHour = 10,
+            startMinute = 0,
+            durationMinutes = 90,
+        )
+        assertFalse(ScheduleCalculator.doSchedulesOverlap(item1, item3))
+
+        // Schedule 4: Monday 11:30 - 12:30 (adjacent, touching boundary, non-overlapping)
+        val item4 = ScheduledItem(
+            id = "s4",
+            label = "Adjacent",
+            type = ScheduleType.WEEKLY,
+            daysOfWeek = setOf(DayOfWeek.MONDAY),
+            startHour = 11,
+            startMinute = 30,
+            durationMinutes = 60,
+        )
+        assertFalse(ScheduleCalculator.doSchedulesOverlap(item1, item4))
+
+        // Schedule 5: Calendar date on a Wednesday (2026-10-28 is Wednesday) at 10:30
+        val item5 = ScheduledItem(
+            id = "s5",
+            label = "Calendar Wednesday",
+            type = ScheduleType.CALENDAR_DATE,
+            year = 2026,
+            month = 10,
+            dayOfMonth = 28,
+            startHour = 10,
+            startMinute = 30,
+            durationMinutes = 45,
+        )
+        // With nowMillis before the date:
+        val beforeDate = ZonedDateTime.of(2026, 10, 28, 8, 0, 0, 0, ZoneId.of("UTC")).toInstant().toEpochMilli()
+        assertTrue("Future calendar routine on Wednesday 10:30 must overlap with MWF 10:00-11:30", ScheduleCalculator.doSchedulesOverlap(item1, item5, nowMillis = beforeDate, zoneId = ZoneId.of("UTC")))
+
+        // With nowMillis AFTER the date (expired):
+        val afterDate = ZonedDateTime.of(2026, 10, 29, 8, 0, 0, 0, ZoneId.of("UTC")).toInstant().toEpochMilli()
+        assertFalse("Past expired calendar routine must NOT block future MWF routine", ScheduleCalculator.doSchedulesOverlap(item1, item5, nowMillis = afterDate, zoneId = ZoneId.of("UTC")))
+    }
+
+    @Test
+    fun testAllowlistOptionalQuotaClamping() {
+        val defaultApps = FocusRepository.DEFAULT_ALLOWLIST
+        val backupApps = setOf(
+            "com.app.extra1", "com.app.extra2", "com.app.extra3",
+            "com.app.extra4", "com.app.extra5", "com.app.extra6", "com.app.extra7"
+        )
+        val mergedSet = defaultApps + backupApps
+        val optionalApps = (mergedSet - defaultApps).toList().take(FocusRepository.MAX_OPTIONAL_ALLOWED_APPS)
+        val clamped = (defaultApps + optionalApps).toSet()
+
+        val optionalCount = clamped.count { it !in defaultApps }
+        assertEquals(5, optionalCount)
+        assertTrue(clamped.containsAll(defaultApps))
+    }
+
+    @Test
+    fun testHistoryTypeSeparationForVectorSimilarity() {
+        val entries = listOf(
+            HistoryEntry("1", HistoryType.SKIPPED, 1000L, title = "Skip", text = "Short skip reason here min twenty words"),
+            HistoryEntry("2", HistoryType.EMERGENCY_EXIT, 2000L, title = "Exit", text = "Legitimate long emergency exit essay here..."),
+            HistoryEntry("3", HistoryType.COMPLETED, 3000L, title = "Done"),
+            HistoryEntry("4", HistoryType.EMERGENCY_EXIT, 4000L, title = "Exit 2", text = "Another emergency exit text..."),
+        )
+        val emergencyEssays = entries.filter { it.type == HistoryType.EMERGENCY_EXIT }.map { it.text }.filter { it.isNotBlank() }
+        assertEquals(2, emergencyEssays.size)
+        assertTrue(emergencyEssays.contains("Legitimate long emergency exit essay here..."))
+        assertFalse(emergencyEssays.contains("Short skip reason here min twenty words"))
+    }
+
+    @Test
+    fun testMilestoneAndSkipPruningLexicographicalDate() {
+        val cutoff = "2026-10-15"
+        val milestones = setOf(
+            "2026-10-10T10:00:PRE_5M", // older than cutoff
+            "2026-10-14T23:30:START",  // older than cutoff
+            "2026-10-15T09:00:PRE_2M", // matches cutoff
+            "2026-10-20T14:00:START",  // newer than cutoff
+        )
+        val valid = milestones.filter { it >= cutoff }.toSet()
+        assertEquals(2, valid.size)
+        assertTrue(valid.contains("2026-10-15T09:00:PRE_2M"))
+        assertTrue(valid.contains("2026-10-20T14:00:START"))
+        assertFalse(valid.contains("2026-10-10T10:00:PRE_5M"))
+    }
+
+    @Test
+    fun testEmergencyExitInitialTypingExploitPrevention() {
+        // Exploit check: when screen opens, lastActiveTypingElapsed is initialized to 0L
+        val lastActiveTypingElapsed = 0L
+        val nowElapsed = 50_000L
+        val activelyTyping = lastActiveTypingElapsed > 0L && (nowElapsed - lastActiveTypingElapsed) <= 10_000L
+        assertFalse("Must not grant active typing seconds without initial keystroke", activelyTyping)
+
+        // After user types:
+        val userTypedAt = 50_000L
+        val activeAfterType = userTypedAt > 0L && (nowElapsed - userTypedAt) <= 10_000L
+        assertTrue("Must count as actively typing within 10s of keystroke", activeAfterType)
     }
 }

@@ -3,6 +3,8 @@ package com.example.learninghelper.focus
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.app.Notification
+import android.content.Context
+import android.media.AudioManager
 import android.util.Log
 import com.example.learninghelper.data.FocusRepository
 import java.lang.ref.WeakReference
@@ -24,6 +26,10 @@ class FocusNotificationListenerService : NotificationListenerService() {
             instance = null
         }
         super.onListenerDisconnected()
+        // Attempt immediate rebind recovery on disconnect (Android 7.0+ API)
+        runCatching {
+            requestRebind(android.content.ComponentName(this, FocusNotificationListenerService::class.java))
+        }
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
@@ -115,7 +121,8 @@ class FocusNotificationListenerService : NotificationListenerService() {
                 val active = service.activeNotifications ?: return null
                 for (sbn in active) {
                     val notif = sbn.notification ?: continue
-                    if (notif.category == Notification.CATEGORY_CALL) {
+                    val isOngoing = sbn.isOngoing || (notif.flags and Notification.FLAG_ONGOING_EVENT) != 0
+                    if (notif.category == Notification.CATEGORY_CALL && isOngoing) {
                         return sbn.packageName
                     }
                 }
@@ -125,12 +132,46 @@ class FocusNotificationListenerService : NotificationListenerService() {
             return null
         }
 
+        fun isCallActive(context: Context): Boolean {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            val mode = audioManager?.mode ?: AudioManager.MODE_NORMAL
+            if (mode in setOf(
+                    AudioManager.MODE_IN_CALL,
+                    AudioManager.MODE_IN_COMMUNICATION,
+                    AudioManager.MODE_RINGTONE,
+                    AudioManager.MODE_CALL_SCREENING
+                )
+            ) {
+                return true
+            }
+            if (findActiveCallPackage() != null) {
+                return true
+            }
+            return false
+        }
+
+        fun ensureRebound(context: Context) {
+            if (instance?.get() == null) {
+                runCatching {
+                    requestRebind(android.content.ComponentName(context, FocusNotificationListenerService::class.java))
+                }
+            }
+        }
+
         fun setInterruptionFilter(filter: Int) {
             val service = instance?.get() ?: return
             try {
                 service.requestInterruptionFilter(filter)
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to set interruption filter", e)
+            }
+        }
+
+        fun resetInterruptionFilterFailsafe(context: Context) {
+            if (!FocusRepository.isDeskClockActive.value) {
+                setInterruptionFilter(NotificationListenerService.INTERRUPTION_FILTER_ALL)
+                val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                runCatching { am?.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, AudioManager.ADJUST_UNMUTE, 0) }
             }
         }
 

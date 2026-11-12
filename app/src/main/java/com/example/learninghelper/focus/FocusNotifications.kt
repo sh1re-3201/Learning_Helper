@@ -79,7 +79,7 @@ object FocusNotifications {
             .setContentIntent(openAppIntent(context))
 
         if (phase == SessionPhase.BREAK) {
-            builder.setContentTitle("Break Time ☕")
+            builder.setContentTitle("Break Time")
             builder.setContentText("Apps unlocked. Relax until next work block.")
         } else {
             builder.setContentTitle("Focus Mode Active")
@@ -87,9 +87,9 @@ object FocusNotifications {
         }
 
         if (AlarmPlayer.isPlaying()) {
-            builder.addAction(R.drawable.ic_stat_focus, "🔇 Silence Alarm", silenceIntent)
+            builder.addAction(R.drawable.ic_stat_focus, "Silence Alarm", silenceIntent)
         }
-        builder.addAction(R.drawable.ic_stat_focus, "🕒 Desk Clock (AOD)", deskClockIntent)
+        builder.addAction(R.drawable.ic_stat_focus, "Desk Clock (AOD)", deskClockIntent)
 
         return builder.build()
     }
@@ -99,12 +99,15 @@ object FocusNotifications {
         val minutes = session.durationMillis / 60_000L
         val notification = NotificationCompat.Builder(context, CHANNEL_EVENTS)
             .setSmallIcon(R.drawable.ic_stat_focus)
-            .setContentTitle("Session Complete 🎉")
+            .setContentTitle("Session Complete")
             .setContentText("Great job! You stayed focused for $minutes minutes.")
             .setAutoCancel(true)
             .setContentIntent(openAppIntent(context))
             .build()
-        NotificationManagerCompat.from(context).notify(ID_COMPLETE, notification)
+        try {
+            NotificationManagerCompat.from(context).notify(ID_COMPLETE, notification)
+        } catch (ignored: SecurityException) {
+        }
     }
 
     fun canPost(context: Context): Boolean =

@@ -64,18 +64,25 @@ class PreSessionActivity : ComponentActivity() {
                 },
                 onSkipConfirmed = { reason ->
                     AlarmPlayer.stop()
-                    FocusRepository.skipOccurrence(
+                    val skipped = FocusRepository.skipOccurrence(
                         occurrenceId = occId,
                         title = title,
                         reasonText = reason,
                         scheduledStartMillis = startMillis,
                     )
-                    AlarmScheduler.scheduleNext(this)
-                    finish()
+                    if (skipped) {
+                        AlarmScheduler.scheduleNext(this)
+                        finish()
+                        true
+                    } else {
+                        false
+                    }
                 },
                 onTimeReached = {
                     AlarmPlayer.stop()
-                    FocusRepository.startSession(durationMin, workMin, breakMin, hasLongBreak = hasLongBreak)
+                    if (!FocusRepository.isFocusActive()) {
+                        FocusRepository.startSession(durationMin, workMin, breakMin, hasLongBreak = hasLongBreak)
+                    }
                     FocusService.start(this)
                     finish()
                 }
@@ -142,7 +149,7 @@ fun PreSessionScreen(
     initialShowSkip: Boolean,
     onProceed: () -> Unit,
     onSilenceAlarm: () -> Unit,
-    onSkipConfirmed: (String) -> Unit,
+    onSkipConfirmed: (String) -> Boolean,
     onTimeReached: () -> Unit,
 ) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -153,6 +160,7 @@ fun PreSessionScreen(
     var validationError by remember { mutableStateOf<String?>(null) }
     var pasteWarning by remember { mutableStateOf(false) }
     var gracePeriodActive by rememberSaveable { mutableStateOf(false) }
+    var graceEndsAtMillis by rememberSaveable { mutableLongStateOf(0L) }
     var graceSecondsRemaining by rememberSaveable { mutableIntStateOf(60) }
 
     LifecycleEventEffect(Lifecycle.Event.ON_START) { isStarted = true }
@@ -160,19 +168,24 @@ fun PreSessionScreen(
 
     LaunchedEffect(isStarted, gracePeriodActive) {
         while (isStarted) {
-            now = System.currentTimeMillis()
+            val currentWall = System.currentTimeMillis()
+            now = currentWall
             if (gracePeriodActive) {
-                delay(1_000L)
-                graceSecondsRemaining--
-                if (graceSecondsRemaining <= 0) {
+                val remainingSec = ((graceEndsAtMillis - currentWall) / 1000L).toInt()
+                if (remainingSec <= 0) {
                     onTimeReached()
                     break
                 }
+                graceSecondsRemaining = remainingSec
+                delay(1_000L)
             } else {
-                if (now >= startMillis) {
+                if (currentWall >= startMillis) {
                     val typedWords = EssayValidator.countRomanWords(skipReasonText)
                     if (showSkipInput && typedWords >= 5) {
                         // Grant one-time +60s grace extension if user is actively mid-sentence
+                        if (graceEndsAtMillis == 0L) {
+                            graceEndsAtMillis = currentWall + 60_000L
+                        }
                         gracePeriodActive = true
                     } else {
                         onTimeReached()
@@ -197,7 +210,7 @@ fun PreSessionScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Text("⏰ Upcoming Session", color = Color(0xFF94A3B8), fontSize = 16.sp)
+        Text("Upcoming Session", color = Color(0xFF94A3B8), fontSize = 16.sp)
         Spacer(Modifier.height(8.dp))
         Text(title, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
 
@@ -217,7 +230,7 @@ fun PreSessionScreen(
 
         Spacer(Modifier.height(24.dp))
         OutlinedButton(onClick = onSilenceAlarm) {
-            Text("🔇 Silence Alarm (or Vol-Key)")
+            Text("Silence Alarm (or Vol-Key)")
         }
 
         Spacer(Modifier.height(16.dp))
@@ -289,7 +302,11 @@ fun PreSessionScreen(
                         val pastSkipReasons = FocusRepository.recentSkipReasons()
                         val result = EssayValidator.validate(skipReasonText, previousEssays = pastSkipReasons, config = EssayConfig.SKIP_REASON)
                         if (result is EssayResult.Accepted) {
-                            onSkipConfirmed(skipReasonText)
+                            val ok = onSkipConfirmed(skipReasonText)
+                            if (!ok) {
+                                validationError = "Skip window has expired or is invalid. Session is starting."
+                                onTimeReached()
+                            }
                         } else if (result is EssayResult.Rejected) {
                             validationError = result.detail
                         }

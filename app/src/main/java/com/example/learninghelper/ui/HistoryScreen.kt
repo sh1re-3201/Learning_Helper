@@ -11,7 +11,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -19,6 +18,7 @@ import androidx.compose.ui.unit.sp
 import com.example.learninghelper.data.FocusRepository
 import com.example.learninghelper.data.HistoryEntry
 import com.example.learninghelper.data.HistoryType
+import com.example.learninghelper.ui.theme.MonoSuccess
 import java.text.SimpleDateFormat
 import java.time.Instant
 import java.time.LocalDate
@@ -98,7 +98,7 @@ fun HistoryScreen(
             )
             MetricCard(
                 title = "Streak",
-                value = if (currentStreak > 0) "$currentStreak d 🔥" else "0 d",
+                value = if (currentStreak > 0) "$currentStreak d" else "0 d",
                 modifier = Modifier.weight(1f),
             )
         }
@@ -126,9 +126,9 @@ fun HistoryScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                             ) {
                                 val tagColor = when (entry.type) {
-                                    HistoryType.COMPLETED -> Color(0xFF10B981)
-                                    HistoryType.SKIPPED -> Color(0xFFF59E0B)
-                                    HistoryType.EMERGENCY_EXIT -> Color(0xFFEF4444)
+                                    HistoryType.COMPLETED -> MonoSuccess
+                                    HistoryType.SKIPPED -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    HistoryType.EMERGENCY_EXIT -> MaterialTheme.colorScheme.error
                                 }
                                 Text(entry.type.name, color = tagColor, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                 Text(sdf.format(Date(entry.timestamp)), color = MaterialTheme.colorScheme.outline, fontSize = 12.sp)

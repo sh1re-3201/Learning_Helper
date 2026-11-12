@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.sp
 import com.example.learninghelper.data.FocusRepository
 import com.example.learninghelper.focus.AlarmScheduler
 import com.example.learninghelper.focus.FocusPolicy
+import com.example.learninghelper.focus.ScheduleCalculator
 import com.example.learninghelper.focus.ScheduleType
 import com.example.learninghelper.focus.ScheduledItem
 import java.time.DayOfWeek
@@ -59,7 +60,7 @@ fun ScheduleScreen(
 
         if (isLocked) {
             Text(
-                "🔒 Schedules cannot be edited during focus or within 5m of a scheduled session.",
+                "Schedules cannot be edited during focus or within 5m of a scheduled session.",
                 color = MaterialTheme.colorScheme.error,
                 fontSize = 12.sp,
                 modifier = Modifier.padding(vertical = 8.dp),
@@ -99,6 +100,13 @@ fun ScheduleScreen(
                                 Switch(
                                     checked = item.enabled,
                                     onCheckedChange = { isChecked ->
+                                        if (isChecked) {
+                                            val candidate = item.copy(enabled = true)
+                                            if (ScheduleCalculator.hasOverlap(schedules, candidate)) {
+                                                android.widget.Toast.makeText(context, "Cannot enable: routine overlaps with an existing active routine", android.widget.Toast.LENGTH_SHORT).show()
+                                                return@Switch
+                                            }
+                                        }
                                         FocusRepository.upsertSchedule(item.copy(enabled = isChecked))
                                         AlarmScheduler.scheduleNext(context)
                                     },
@@ -125,6 +133,7 @@ fun ScheduleScreen(
 
     if (showAddDialog) {
         AddScheduleDialog(
+            existingSchedules = schedules,
             onDismiss = { showAddDialog = false },
             onConfirm = { newItem ->
                 FocusRepository.upsertSchedule(newItem)
@@ -137,6 +146,7 @@ fun ScheduleScreen(
 
 @Composable
 fun AddScheduleDialog(
+    existingSchedules: List<ScheduledItem> = emptyList(),
     onDismiss: () -> Unit,
     onConfirm: (ScheduledItem) -> Unit,
 ) {
@@ -179,8 +189,42 @@ fun AddScheduleDialog(
         } else false
     }
 
+    val candidateItem = remember(
+        label, scheduleType, selectedDays, calYear, calMonth, calDay,
+        startHour, startMinute, endHour, endMinute, durationMin, parsedWork, parsedBreak, hasLongBreak, isDurationValid
+    ) {
+        if (!isDurationValid) null
+        else {
+            val bMin = parsedBreak ?: 0
+            val wMin = if (bMin > 0) (parsedWork ?: durationMin) else durationMin
+            val longBreak = hasLongBreak && durationMin > FocusPolicy.LONG_BREAK_THRESHOLD_MINUTES
+            ScheduledItem(
+                id = "candidate",
+                label = label.ifBlank { "Focus Routine" },
+                type = scheduleType,
+                daysOfWeek = if (scheduleType == ScheduleType.WEEKLY) selectedDays else emptySet(),
+                year = if (scheduleType == ScheduleType.CALENDAR_DATE) calYear else 0,
+                month = if (scheduleType == ScheduleType.CALENDAR_DATE) calMonth else 0,
+                dayOfMonth = if (scheduleType == ScheduleType.CALENDAR_DATE) calDay else 0,
+                startHour = startHour,
+                startMinute = startMinute,
+                durationMinutes = durationMin,
+                workMinutes = wMin,
+                breakMinutes = bMin,
+                enabled = true,
+                endHour = endHour,
+                endMinute = endMinute,
+                hasLongBreak = longBreak,
+            )
+        }
+    }
+
+    val hasOverlap = remember(candidateItem, existingSchedules) {
+        candidateItem != null && ScheduleCalculator.hasOverlap(existingSchedules, candidateItem)
+    }
+
     val isValid = (scheduleType != ScheduleType.WEEKLY || selectedDays.isNotEmpty()) &&
-        !isPastDateTime && isDurationValid && isIntervalValid
+        !isPastDateTime && isDurationValid && isIntervalValid && !hasOverlap
 
     val openDatePicker = {
         android.app.DatePickerDialog(
@@ -291,7 +335,7 @@ fun AddScheduleDialog(
                             label = { Text("Target Date") },
                         )
                         Button(onClick = openDatePicker) {
-                            Text("Pick 📅")
+                            Text("Pick")
                         }
                     }
                 }
@@ -404,6 +448,8 @@ fun AddScheduleDialog(
                     )
                 } else if (isPastDateTime) {
                     Text("Cannot schedule a session in the past.", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                } else if (hasOverlap) {
+                    Text("This routine overlaps with an existing scheduled routine.", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 } else if (scheduleType == ScheduleType.WEEKLY && selectedDays.isEmpty()) {
                     Text("Select at least one day.", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 }

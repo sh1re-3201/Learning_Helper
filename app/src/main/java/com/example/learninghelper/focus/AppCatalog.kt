@@ -19,6 +19,10 @@ object AppCatalog {
         "com.samsung.android.app.routines",
         "com.android.vending",
         "com.sec.android.app.samsungapps",
+        "com.samsung.knox.securefolder",
+        "com.samsung.android.da.daagent",
+        "com.samsung.android.app.cocktailbarservice",
+        "com.samsung.android.app.appsedge",
     )
 
     val THESIS_ESSENTIALS = setOf(
@@ -38,6 +42,7 @@ object AppCatalog {
 
     val STATIC_ALWAYS_ALLOWED = setOf(
         "android",
+        "com.android.settings", // Always permitted for system settings and uninstallation
         "com.android.systemui",
         "com.android.server.telecom",
         "com.android.phone",

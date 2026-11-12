@@ -8,6 +8,7 @@ import com.example.learninghelper.data.FocusRepository
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         FocusRepository.init(context)
+        FocusNotificationListenerService.resetInterruptionFilterFailsafe(context)
         when (intent.action) {
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED,
@@ -18,6 +19,16 @@ class BootReceiver : BroadcastReceiver() {
                     FocusService.start(context)
                 } else {
                     FocusRepository.clearExpiredSession()
+                    val ongoing = ScheduleCalculator.findOngoingOccurrence(
+                        items = FocusRepository.schedules.value,
+                        skippedOccurrenceIds = FocusRepository.skippedOccurrences.value,
+                        nowMillis = System.currentTimeMillis(),
+                    )
+                    if (ongoing != null) {
+                        FocusRepository.startScheduledSession(ongoing)
+                        FocusService.start(context)
+                        ForegroundAppMonitor.enforceCurrentWindows(context)
+                    }
                 }
                 AlarmScheduler.scheduleNext(context)
             }

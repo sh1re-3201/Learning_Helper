@@ -42,6 +42,12 @@ object ExternalBackupStorage {
         return File(appDir, TMP_FILE_NAME)
     }
 
+    fun backupFileExists(): Boolean = runCatching {
+        val target = getBackupFile()
+        val tmp = getTempFile()
+        (target.exists() && target.length() > 0L) || (tmp.exists() && tmp.length() > 0L)
+    }.getOrDefault(false)
+
     /**
      * Atomically exports the backup snapshot to the external document directory.
      * Writes to a temporary file first and renames to prevent partial write corruption.
@@ -74,13 +80,14 @@ object ExternalBackupStorage {
     fun readBackup(): BackupSnapshot? = runCatching {
         val target = getBackupFile()
         val tmp = getTempFile()
-        val fileToRead = when {
-            target.exists() && target.length() > 0L -> target
-            tmp.exists() && tmp.length() > 0L -> tmp
-            else -> return null
+        var snapshot: BackupSnapshot? = null
+        if (target.exists() && target.length() > 0L) {
+            snapshot = runCatching { parseSnapshot(target.readText(Charsets.UTF_8)) }.getOrNull()
         }
-        val jsonStr = fileToRead.readText(Charsets.UTF_8)
-        parseSnapshot(jsonStr)
+        if (snapshot == null && tmp.exists() && tmp.length() > 0L) {
+            snapshot = runCatching { parseSnapshot(tmp.readText(Charsets.UTF_8)) }.getOrNull()
+        }
+        snapshot
     }.getOrNull()
 
     fun serializeSnapshot(snapshot: BackupSnapshot): String {
@@ -141,7 +148,7 @@ object ExternalBackupStorage {
         return root.toString(2)
     }
 
-    fun parseSnapshot(jsonStr: String): BackupSnapshot = runCatching {
+    fun parseSnapshot(jsonStr: String): BackupSnapshot? = runCatching {
         val root = JSONObject(jsonStr)
         val schemaVer = root.optInt("schemaVersion", 1)
         val updatedAt = root.optLong("updatedAt", System.currentTimeMillis())
@@ -243,5 +250,5 @@ object ExternalBackupStorage {
             allowlist = allows,
             minWritingMinutes = minWriting,
         )
-    }.getOrDefault(BackupSnapshot())
+    }.getOrNull()
 }

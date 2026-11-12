@@ -106,7 +106,7 @@ object ScheduleCalculator {
             when (item.type) {
                 ScheduleType.WEEKLY -> {
                     if (item.daysOfWeek.isEmpty()) continue
-                    for (dayOffset in 0L..8L) {
+                    for (dayOffset in 0L..21L) {
                         val candidateDate = today.plusDays(dayOffset)
                         if (candidateDate.dayOfWeek !in item.daysOfWeek) continue
                         val startMillis = candidateDate.atTime(time).atZone(zoneId).toInstant().toEpochMilli()
@@ -200,8 +200,182 @@ object ScheduleCalculator {
         nowMillis: Long,
         zoneId: ZoneId = ZoneId.systemDefault(),
     ): Boolean {
-        // Look back up to 60s so mid-sentence typing grace period at T-0 remains locked
-        val occ = findNextOccurrence(items, skippedOccurrenceIds, nowMillis - 60_000L, zoneId) ?: return false
-        return nowMillis in occ.pre5mAtMillis until (occ.startAtMillis + 60_000L)
+        // Look back up to 75s so mid-sentence typing grace period at T-0 remains locked
+        val occ = findNextOccurrence(items, skippedOccurrenceIds, nowMillis - 75_000L, zoneId) ?: return false
+        return nowMillis in occ.pre5mAtMillis until (occ.startAtMillis + 75_000L)
+    }
+
+    /**
+     * Finds any scheduled occurrence that started before `nowMillis` and is currently in its active
+     * duration interval `[startAtMillis, startAtMillis + durationMillis)`.
+     * Critical for recovering active sessions across reboots, especially for overnight routines
+     * that crossed midnight (e.g. 23:30 - 01:30).
+     */
+    fun findOngoingOccurrence(
+        items: List<ScheduledItem>,
+        skippedOccurrenceIds: Set<String>,
+        nowMillis: Long,
+        zoneId: ZoneId = ZoneId.systemDefault(),
+    ): UpcomingOccurrence? {
+        val enabledItems = items.filter { it.enabled }
+        if (enabledItems.isEmpty()) return null
+
+        val nowZoned = Instant.ofEpochMilli(nowMillis).atZone(zoneId)
+        val today = nowZoned.toLocalDate()
+        val yesterday = today.minusDays(1)
+
+        val candidates = mutableListOf<UpcomingOccurrence>()
+
+        for (item in enabledItems) {
+            val time = LocalTime.of(item.startHour, item.startMinute)
+            when (item.type) {
+                ScheduleType.WEEKLY -> {
+                    if (item.daysOfWeek.isEmpty()) continue
+                    // Check yesterday (for overnight cross-midnight sessions) and today
+                    for (date in listOf(yesterday, today)) {
+                        if (date.dayOfWeek !in item.daysOfWeek) continue
+                        val startMillis = date.atTime(time).atZone(zoneId).toInstant().toEpochMilli()
+                        val endMillis = startMillis + item.durationMinutes * 60_000L
+                        if (nowMillis in startMillis until endMillis) {
+                            val occId = occurrenceIdFor(date, time)
+                            if (occId !in skippedOccurrenceIds) {
+                                candidates += UpcomingOccurrence(occId, item, startMillis)
+                            }
+                        }
+                    }
+                }
+                ScheduleType.CALENDAR_DATE -> {
+                    val date = runCatching { LocalDate.of(item.year, item.month, item.dayOfMonth) }.getOrNull()
+                        ?: continue
+                    val startMillis = date.atTime(time).atZone(zoneId).toInstant().toEpochMilli()
+                    val endMillis = startMillis + item.durationMinutes * 60_000L
+                    if (nowMillis in startMillis until endMillis) {
+                        val occId = occurrenceIdFor(date, time)
+                        if (occId !in skippedOccurrenceIds) {
+                            candidates += UpcomingOccurrence(occId, item, startMillis)
+                        }
+                    }
+                }
+            }
+        }
+
+        return candidates.minWithOrNull(
+            compareBy<UpcomingOccurrence> { it.startAtMillis }
+                .thenByDescending { it.item.durationMinutes }
+        )
+    }
+
+    /**
+     * Checks if two scheduled items have overlapping time intervals on any shared recurring day
+     * or calendar date, accounting for midnight spillover. Expired past calendar dates are ignored.
+     */
+    fun doSchedulesOverlap(
+        a: ScheduledItem,
+        b: ScheduledItem,
+        nowMillis: Long = System.currentTimeMillis(),
+        zoneId: ZoneId = ZoneId.systemDefault(),
+    ): Boolean {
+        if (!a.enabled || !b.enabled) return false
+
+        fun isCalendarDateExpired(item: ScheduledItem): Boolean {
+            if (item.type != ScheduleType.CALENDAR_DATE) return false
+            val date = runCatching { LocalDate.of(item.year, item.month, item.dayOfMonth) }.getOrNull() ?: return true
+            val startMillis = date.atTime(LocalTime.of(item.startHour, item.startMinute)).atZone(zoneId).toInstant().toEpochMilli()
+            val endMillis = startMillis + item.durationMinutes * 60_000L
+            return endMillis <= nowMillis
+        }
+
+        if (isCalendarDateExpired(a) || isCalendarDateExpired(b)) return false
+
+        // Helper to get active minute intervals on a given day [0..1440)
+        fun getIntervalsOnDay(
+            item: ScheduledItem,
+            runsOnDay: Boolean,
+            runsOnPrevDay: Boolean,
+        ): List<IntRange> {
+            val intervals = mutableListOf<IntRange>()
+            val startMin = item.startHour * 60 + item.startMinute
+            val endMin = startMin + item.durationMinutes
+
+            if (runsOnDay) {
+                intervals.add(startMin until minOf(1440, endMin))
+            }
+            if (runsOnPrevDay && endMin > 1440) {
+                intervals.add(0 until (endMin - 1440))
+            }
+            return intervals
+        }
+
+        fun intervalsOverlap(listA: List<IntRange>, listB: List<IntRange>): Boolean {
+            for (rangeA in listA) {
+                for (rangeB in listB) {
+                    if (maxOf(rangeA.first, rangeB.first) < minOf(rangeA.last + 1, rangeB.last + 1)) {
+                        return true
+                    }
+                }
+            }
+            return false
+        }
+
+        // Case 1: Both WEEKLY
+        if (a.type == ScheduleType.WEEKLY && b.type == ScheduleType.WEEKLY) {
+            val days = DayOfWeek.values()
+            for (d in days) {
+                val prevD = d.minus(1)
+                val aRuns = d in a.daysOfWeek
+                val aRunsPrev = prevD in a.daysOfWeek
+                val bRuns = d in b.daysOfWeek
+                val bRunsPrev = prevD in b.daysOfWeek
+
+                val intervalsA = getIntervalsOnDay(a, aRuns, aRunsPrev)
+                val intervalsB = getIntervalsOnDay(b, bRuns, bRunsPrev)
+                if (intervalsOverlap(intervalsA, intervalsB)) return true
+            }
+            return false
+        }
+
+        // Case 2: Both CALENDAR_DATE
+        if (a.type == ScheduleType.CALENDAR_DATE && b.type == ScheduleType.CALENDAR_DATE) {
+            val dateA = runCatching { LocalDate.of(a.year, a.month, a.dayOfMonth) }.getOrNull() ?: return false
+            val dateB = runCatching { LocalDate.of(b.year, b.month, b.dayOfMonth) }.getOrNull() ?: return false
+
+            val checkDates = setOf(dateA, dateA.plusDays(1), dateB, dateB.plusDays(1))
+            for (d in checkDates) {
+                val intervalsA = getIntervalsOnDay(a, d == dateA, d == dateA.plusDays(1))
+                val intervalsB = getIntervalsOnDay(b, d == dateB, d == dateB.plusDays(1))
+                if (intervalsOverlap(intervalsA, intervalsB)) return true
+            }
+            return false
+        }
+
+        // Case 3: One CALENDAR_DATE, one WEEKLY
+        val (cal, weekly) = if (a.type == ScheduleType.CALENDAR_DATE) Pair(a, b) else Pair(b, a)
+        val calDate = runCatching { LocalDate.of(cal.year, cal.month, cal.dayOfMonth) }.getOrNull() ?: return false
+        val nextDate = calDate.plusDays(1)
+
+        for (d in listOf(calDate, nextDate)) {
+            val calRuns = d == calDate
+            val calRunsPrev = d == nextDate
+            val weeklyRuns = d.dayOfWeek in weekly.daysOfWeek
+            val weeklyRunsPrev = d.minusDays(1).dayOfWeek in weekly.daysOfWeek
+
+            val intervalsCal = getIntervalsOnDay(cal, calRuns, calRunsPrev)
+            val intervalsWeekly = getIntervalsOnDay(weekly, weeklyRuns, weeklyRunsPrev)
+            if (intervalsOverlap(intervalsCal, intervalsWeekly)) return true
+        }
+
+        return false
+    }
+
+    /**
+     * Checks if a [candidate] schedule conflicts with any item in [existing].
+     */
+    fun hasOverlap(
+        existing: List<ScheduledItem>,
+        candidate: ScheduledItem,
+        nowMillis: Long = System.currentTimeMillis(),
+        zoneId: ZoneId = ZoneId.systemDefault(),
+    ): Boolean {
+        return existing.any { it.id != candidate.id && doSchedulesOverlap(it, candidate, nowMillis, zoneId) }
     }
 }

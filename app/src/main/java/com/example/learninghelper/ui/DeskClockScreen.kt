@@ -90,7 +90,7 @@ fun DeskClockScreen(
             runCatching { audioManager?.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, AudioManager.ADJUST_MUTE, 0) }
         }
         FocusRepository.setDeskClockActive(true)
-        FocusNotificationListenerService.setInterruptionFilter(NotificationListenerService.INTERRUPTION_FILTER_ALARMS)
+        FocusNotificationListenerService.setInterruptionFilter(NotificationListenerService.INTERRUPTION_FILTER_PRIORITY)
         FocusNotificationListenerService.sweepDistractions()
 
         onDispose {
@@ -196,7 +196,7 @@ fun DeskClockScreen(
             )
             if (isBreak) {
                 Text(
-                    text = "BREAK TIME ☕",
+                    text = "BREAK TIME",
                     color = Color(0xFFBFDBFE),
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -227,24 +227,21 @@ fun DeskClockScreen(
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                 )
-                var chronoRef by remember { mutableStateOf<Chronometer?>(null) }
-                DisposableEffect(isStarted) {
-                    if (isStarted) chronoRef?.start() else chronoRef?.stop()
-                    onDispose { chronoRef?.stop() }
-                }
                 AndroidView(
                     factory = { ctx ->
                         Chronometer(ctx).apply {
                             setTextColor(android.graphics.Color.parseColor(if (isBreak) "#FFFFFF" else "#5EEAD4"))
                             textSize = 28f
                             isCountDown = true
-                            chronoRef = this
                         }
                     },
                     update = { chrono ->
                         chrono.base = SystemClock.elapsedRealtime() + remainingMs
                         chrono.setTextColor(android.graphics.Color.parseColor(if (isBreak) "#FFFFFF" else "#5EEAD4"))
                         if (isStarted) chrono.start() else chrono.stop()
+                    },
+                    onRelease = { chrono ->
+                        chrono.stop()
                     }
                 )
             }
