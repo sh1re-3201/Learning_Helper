@@ -60,7 +60,8 @@
             android:name=".BlockActivity"
             android:excludeFromRecents="true"
             android:exported="false"
-            android:launchMode="singleTask"
+            android:launchMode="singleTop"
+            android:resizeableActivity="true"
             android:taskAffinity=""
             android:theme="@style/Theme.LearningHelper" />
 
@@ -96,7 +97,7 @@
 
         <receiver
             android:name=".focus.BootReceiver"
-            android:exported="false">
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />

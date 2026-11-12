@@ -2,13 +2,17 @@ package com.example.learninghelper.focus
 
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.media.AudioManager
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
+import android.util.Log
 import com.example.learninghelper.BlockActivity
 import com.example.learninghelper.data.FocusRepository
 
@@ -21,9 +25,10 @@ import com.example.learninghelper.data.FocusRepository
  */
 object ForegroundAppMonitor {
 
+    private const val TAG = "ForegroundAppMonitor"
     private const val CHECK_INTERVAL_MS = 400L
     private const val DEBOUNCE_MS = 400L
-    private const val LOOKBACK_SWEEP_MS = 15 * 60_000L
+    private const val LOOKBACK_SWEEP_MS = 45 * 60_000L
 
     private val monitorThread = HandlerThread("ForegroundAppMonitorThread").apply { start() }
     private val backgroundHandler = Handler(monitorThread.looper)
@@ -37,23 +42,42 @@ object ForegroundAppMonitor {
 
     private var alwaysAllowed: Set<String> = emptySet()
     private var lastAlwaysAllowedRefresh = 0L
+    @Volatile
     private var lastAllowedPackage: String? = null
+    @Volatile
+    private var lastAllowedPhase: SessionPhase? = null
+    @Volatile
     private var lastKnownForegroundPackage: String? = null
+    @Volatile
     private var lastBlockAtElapsed = 0L
+    @Volatile
     private var lastObservedPhase: SessionPhase? = null
-    private var workPhaseGrandfatherChecked = false
     private var lastCallNormalElapsed = 0L
     private var postCallRunnableScheduled = false
+
+    private const val PERMISSION_PROMPT_COOLDOWN_MS = 5_000L
+    @Volatile
+    private var lastPermissionPromptElapsed = 0L
+
+    private var screenReceiverRegistered = false
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                Intent.ACTION_SCREEN_OFF -> onScreenOff()
+                Intent.ACTION_SCREEN_ON -> onScreenOn(context)
+            }
+        }
+    }
 
     private val postCallLockoutRunnable = Runnable {
         postCallRunnableScheduled = false
         val ctx = cachedContext ?: return@Runnable
-        val am = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-        val stillInCall = am?.mode == AudioManager.MODE_IN_CALL || am?.mode == AudioManager.MODE_IN_COMMUNICATION
+        val stillInCall = FocusNotificationListenerService.isCallActive(ctx)
         if (!stillInCall) {
             FocusRepository.setGrandfatheredCallPackage(null)
             lastCallNormalElapsed = 0L
             lastAllowedPackage = null
+            lastAllowedPhase = null
             lastKnownForegroundPackage = null
             enforceCurrentWindows(ctx)
         }
@@ -73,7 +97,20 @@ object ForegroundAppMonitor {
 
     @Synchronized
     fun start(context: Context) {
-        cachedContext = context.applicationContext
+        val appCtx = context.applicationContext
+        cachedContext = appCtx
+        val pm = appCtx.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        isScreenOn = pm?.isInteractive ?: true
+
+        if (!screenReceiverRegistered) {
+            val filter = IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
+            }
+            appCtx.registerReceiver(screenReceiver, filter)
+            screenReceiverRegistered = true
+        }
+
         refreshAlwaysAllowed(context)
         if (!isRunning) {
             isRunning = true
@@ -92,13 +129,17 @@ object ForegroundAppMonitor {
     @Synchronized
     fun stop() {
         isRunning = false
+        if (screenReceiverRegistered) {
+            runCatching { cachedContext?.unregisterReceiver(screenReceiver) }
+            screenReceiverRegistered = false
+        }
         backgroundHandler.removeCallbacks(checkRunnable)
         backgroundHandler.removeCallbacks(postCallLockoutRunnable)
         postCallRunnableScheduled = false
         lastAllowedPackage = null
+        lastAllowedPhase = null
         lastKnownForegroundPackage = null
         lastObservedPhase = null
-        workPhaseGrandfatherChecked = false
         lastCallNormalElapsed = 0L
     }
 
@@ -126,16 +167,14 @@ object ForegroundAppMonitor {
     fun enforceCurrentWindows(context: Context? = null) {
         val ctx = context?.applicationContext ?: cachedContext ?: return
         lastKnownForegroundPackage = null
+        lastAllowedPackage = null
+        lastAllowedPhase = null
         backgroundHandler.post {
             checkForeground(ctx, isImmediateSweep = true)
         }
     }
 
     private fun checkForeground(context: Context, isImmediateSweep: Boolean) {
-        if (!Permissions.hasUsageStatsPermission(context)) {
-            return
-        }
-
         val wallNow = System.currentTimeMillis()
         val effNow = FocusRepository.effectiveNow(wallNow)
         val session = FocusRepository.activeSession(wallNow)
@@ -144,6 +183,25 @@ object ForegroundAppMonitor {
             skippedOccurrenceIds = FocusRepository.skippedOccurrences.value,
             nowMillis = wallNow,
         )
+
+        if (!Permissions.hasUsageStatsPermission(context)) {
+            val elapsed = SystemClock.elapsedRealtime()
+            if ((session != null || inPreSession) && elapsed - lastPermissionPromptElapsed > PERMISSION_PROMPT_COOLDOWN_MS) {
+                lastPermissionPromptElapsed = elapsed
+                mainHandler.post {
+                    val intent = Intent(context, com.example.learninghelper.MainActivity::class.java).apply {
+                        putExtra(com.example.learninghelper.MainActivity.EXTRA_SCREEN, com.example.learninghelper.MainActivity.SCREEN_HOME)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    }
+                    context.startActivity(intent)
+                }
+            }
+            return
+        }
+
+        if (session != null && !isImmediateSweep) {
+            FocusRepository.checkpointMonotonicProgress()
+        }
 
         if (session == null && !inPreSession) {
             stop()
@@ -161,8 +219,11 @@ object ForegroundAppMonitor {
             val curPhase = session.currentPhase(effNow)
             if (curPhase != lastObservedPhase) {
                 lastObservedPhase = curPhase
+                lastAllowedPackage = null
+                lastAllowedPhase = null
+                lastKnownForegroundPackage = null
+                lastBlockAtElapsed = 0L
                 if (curPhase == SessionPhase.WORK) {
-                    workPhaseGrandfatherChecked = false
                     lastCallNormalElapsed = 0L
                 } else {
                     FocusRepository.setGrandfatheredCallPackage(null)
@@ -170,29 +231,32 @@ object ForegroundAppMonitor {
             }
 
             if (curPhase == SessionPhase.WORK) {
-                val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-                val inCall = audioManager?.mode == AudioManager.MODE_IN_CALL || audioManager?.mode == AudioManager.MODE_IN_COMMUNICATION
+                val inCall = FocusNotificationListenerService.isCallActive(context)
 
-                if (!workPhaseGrandfatherChecked) {
-                    workPhaseGrandfatherChecked = true
-                    if (inCall) {
+                if (inCall) {
+                    val currentGrandfathered = FocusRepository.grandfatheredCallPackage.value
+                    if (currentGrandfathered.isNullOrBlank()) {
                         val activePkg = FocusNotificationListenerService.findActiveCallPackage()
-                            ?: candidatePackages.firstOrNull {
-                                it !in alwaysAllowed &&
-                                    it !in AppCatalog.ALWAYS_BLOCKED_DURING_SESSION &&
-                                    it !in FocusRepository.allowlist.value
-                            }
-                        if (!activePkg.isNullOrBlank()) {
-                            FocusRepository.setGrandfatheredCallPackage(activePkg)
+                        val pkgToGrandfather = if (!activePkg.isNullOrBlank()) {
+                            activePkg
+                        } else {
+                            // Fallback if notification listener is unbound: inspect visible candidate
+                            candidatePackages.firstOrNull { it !in AppCatalog.STATIC_ALWAYS_ALLOWED && it !in AppCatalog.ALWAYS_BLOCKED_DURING_SESSION }
                         }
-                    } else {
-                        FocusRepository.setGrandfatheredCallPackage(null)
+                        if (!pkgToGrandfather.isNullOrBlank() && pkgToGrandfather !in AppCatalog.ALWAYS_BLOCKED_DURING_SESSION) {
+                            FocusRepository.setGrandfatheredCallPackage(pkgToGrandfather)
+                            lastAllowedPackage = null
+                            lastAllowedPhase = null
+                        }
                     }
-                }
-
-                val currentGrandfathered = FocusRepository.grandfatheredCallPackage.value
-                if (!currentGrandfathered.isNullOrBlank()) {
-                    if (!inCall) {
+                    if (postCallRunnableScheduled) {
+                        postCallRunnableScheduled = false
+                        backgroundHandler.removeCallbacks(postCallLockoutRunnable)
+                    }
+                    lastCallNormalElapsed = 0L
+                } else {
+                    val currentGrandfathered = FocusRepository.grandfatheredCallPackage.value
+                    if (!currentGrandfathered.isNullOrBlank()) {
                         if (lastCallNormalElapsed == 0L) {
                             lastCallNormalElapsed = elapsed
                             if (!postCallRunnableScheduled) {
@@ -203,6 +267,7 @@ object ForegroundAppMonitor {
                             FocusRepository.setGrandfatheredCallPackage(null)
                             lastCallNormalElapsed = 0L
                             lastAllowedPackage = null
+                            lastAllowedPhase = null
                             lastKnownForegroundPackage = null
                         }
                     } else {
@@ -216,7 +281,7 @@ object ForegroundAppMonitor {
             }
         } else {
             lastObservedPhase = null
-            workPhaseGrandfatherChecked = false
+            lastAllowedPhase = null
             lastCallNormalElapsed = 0L
             lastAllowedPackage = null
             FocusRepository.setGrandfatheredCallPackage(null)
@@ -224,7 +289,12 @@ object ForegroundAppMonitor {
 
         val grandfatheredCallPkg = FocusRepository.grandfatheredCallPackage.value
 
-        if (candidatePackages.size == 1 && candidatePackages.first() == lastAllowedPackage && !inPreSession) {
+        val currentPhase = if (session != null && session.isActive(effNow)) session.currentPhase(effNow) else null
+        if (candidatePackages.size == 1 &&
+            candidatePackages.first() == lastAllowedPackage &&
+            currentPhase == lastAllowedPhase &&
+            !inPreSession
+        ) {
             return
         }
 
@@ -242,6 +312,7 @@ object ForegroundAppMonitor {
 
             if (block) {
                 lastAllowedPackage = null
+                lastAllowedPhase = null
                 lastKnownForegroundPackage = null
                 if (elapsed - lastBlockAtElapsed > DEBOUNCE_MS) {
                     lastBlockAtElapsed = elapsed
@@ -249,12 +320,30 @@ object ForegroundAppMonitor {
                         val intent = BlockActivity.createIntent(context, pkg).apply {
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                         }
-                        context.startActivity(intent)
+                        val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? android.hardware.display.DisplayManager
+                        val displays = dm?.displays ?: emptyArray()
+                        if (displays.size > 1) {
+                            for (d in displays) {
+                                if (d.isValid && d.state == android.view.Display.STATE_ON) {
+                                    val options = android.app.ActivityOptions.makeBasic().setLaunchDisplayId(d.displayId)
+                                    try {
+                                        context.startActivity(intent, options.toBundle())
+                                    } catch (e: Exception) {
+                                        Log.w(TAG, "Could not launch BlockActivity on display ${d.displayId}", e)
+                                    }
+                                }
+                            }
+                        } else {
+                            context.startActivity(intent)
+                        }
                     }
+                } else {
+                    backgroundHandler.postDelayed({ checkForeground(context, isImmediateSweep = false) }, DEBOUNCE_MS)
                 }
                 break
             } else {
                 lastAllowedPackage = pkg
+                lastAllowedPhase = currentPhase
             }
         }
     }
@@ -273,20 +362,45 @@ object ForegroundAppMonitor {
             val event = UsageEvents.Event()
             var latestPkg: String? = null
             var latestTime = 0L
+            val activeResumed = mutableSetOf<String>()
+            val pkgLastEvent = mutableMapOf<String, Int>()
+            val pkgLastTime = mutableMapOf<String, Long>()
 
             while (events.hasNextEvent()) {
                 events.getNextEvent(event)
-                if (event.eventType == UsageEvents.Event.ACTIVITY_RESUMED) {
-                    if (event.timeStamp >= latestTime) {
-                        latestTime = event.timeStamp
-                        latestPkg = event.packageName
+                val pkg = event.packageName ?: continue
+                when (event.eventType) {
+                    UsageEvents.Event.ACTIVITY_RESUMED -> {
+                        pkgLastEvent[pkg] = UsageEvents.Event.ACTIVITY_RESUMED
+                        pkgLastTime[pkg] = event.timeStamp
+                        if (event.timeStamp >= latestTime) {
+                            latestTime = event.timeStamp
+                            latestPkg = pkg
+                        }
+                    }
+                    UsageEvents.Event.ACTIVITY_PAUSED,
+                    UsageEvents.Event.ACTIVITY_STOPPED -> {
+                        val lastResume = pkgLastTime[pkg] ?: 0L
+                        if (event.timeStamp >= lastResume) {
+                            pkgLastEvent[pkg] = event.eventType
+                        }
                     }
                 }
             }
 
-            if (latestPkg != null) {
-                lastKnownForegroundPackage = latestPkg
-                return setOf(latestPkg)
+            for ((pkg, eventType) in pkgLastEvent) {
+                if (eventType == UsageEvents.Event.ACTIVITY_RESUMED) {
+                    activeResumed.add(pkg)
+                }
+            }
+
+            val mostRecentActive = activeResumed.maxByOrNull { pkgLastTime[it] ?: 0L }
+            if (mostRecentActive != null) {
+                lastKnownForegroundPackage = mostRecentActive
+            }
+
+            if (activeResumed.isNotEmpty()) {
+                return activeResumed
             }
         } catch (ignored: Exception) {}
 
@@ -301,7 +415,7 @@ object ForegroundAppMonitor {
         try {
             val stats = usm.queryUsageStats(
                 UsageStatsManager.INTERVAL_DAILY,
-                nowWall - 15_000L,
+                nowWall - 60 * 60_000L,
                 nowWall,
             )
             stats?.maxByOrNull { it.lastTimeUsed }?.packageName?.let {

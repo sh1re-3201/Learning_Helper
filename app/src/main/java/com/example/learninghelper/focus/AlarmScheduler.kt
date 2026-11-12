@@ -6,10 +6,12 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
@@ -24,16 +26,29 @@ object AlarmPlayer {
     private var wakeLock: PowerManager.WakeLock? = null
     private val handler = Handler(Looper.getMainLooper())
     private val autoStopRunnable = Runnable { stop() }
+    private var audioFocusRequest: AudioFocusRequest? = null
+    private var appContext: Context? = null
+    private var volumeReceiverRegistered = false
+
+    private val volumeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "android.media.VOLUME_CHANGED_ACTION") {
+                Log.i("AlarmPlayer", "Hardware volume key press detected, silencing alarm.")
+                stop()
+            }
+        }
+    }
 
     @Synchronized
     fun play(context: Context, soundUriString: String?, timeoutMs: Long = 45_000L) {
         stop()
 
-        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-        if (audioManager?.mode == AudioManager.MODE_IN_CALL || audioManager?.mode == AudioManager.MODE_IN_COMMUNICATION) {
-            Log.i("AlarmPlayer", "Call active; suppressing audible alarm.")
+        if (FocusNotificationListenerService.isCallActive(context)) {
+            Log.i("AlarmPlayer", "Call active or ringing; suppressing audible alarm.")
             return
         }
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        appContext = context.applicationContext
 
         try {
             val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
@@ -42,6 +57,33 @@ object AlarmPlayer {
             }
 
             handler.postDelayed(autoStopRunnable, timeoutMs)
+
+            val audioAttributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ALARM)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+
+            val focusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
+                if (focusChange == AudioManager.AUDIOFOCUS_LOSS ||
+                    focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT ||
+                    focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK
+                ) {
+                    Log.i("AlarmPlayer", "Audio focus lost ($focusChange); stopping alarm.")
+                    stop()
+                }
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                    .setAudioAttributes(audioAttributes)
+                    .setOnAudioFocusChangeListener(focusChangeListener, handler)
+                    .build()
+                audioFocusRequest = focusRequest
+                audioManager?.requestAudioFocus(focusRequest)
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager?.requestAudioFocus(focusChangeListener, AudioManager.STREAM_ALARM, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            }
 
             val soundUri = if (!soundUriString.isNullOrBlank()) {
                 Uri.parse(soundUriString)
@@ -52,15 +94,23 @@ object AlarmPlayer {
 
             mediaPlayer = MediaPlayer().apply {
                 setDataSource(context, soundUri)
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
+                setAudioAttributes(audioAttributes)
                 isLooping = true
                 prepare()
                 start()
+            }
+
+            try {
+                val appCtx = context.applicationContext
+                val filter = android.content.IntentFilter("android.media.VOLUME_CHANGED_ACTION")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    appCtx.registerReceiver(volumeReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+                } else {
+                    appCtx.registerReceiver(volumeReceiver, filter)
+                }
+                volumeReceiverRegistered = true
+            } catch (e: Exception) {
+                Log.w("AlarmPlayer", "Could not register volumeReceiver", e)
             }
         } catch (e: Exception) {
             Log.w("AlarmPlayer", "Failed to start alarm sound playback", e)
@@ -72,7 +122,22 @@ object AlarmPlayer {
 
     @Synchronized
     fun stop() {
+        if (volumeReceiverRegistered) {
+            runCatching { appContext?.unregisterReceiver(volumeReceiver) }
+            volumeReceiverRegistered = false
+        }
         handler.removeCallbacks(autoStopRunnable)
+        try {
+            val am = appContext?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                audioFocusRequest?.let { am?.abandonAudioFocusRequest(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                am?.abandonAudioFocus(null)
+            }
+        } catch (ignored: Exception) {}
+        audioFocusRequest = null
+
         try {
             mediaPlayer?.stop()
             mediaPlayer?.release()
@@ -108,13 +173,28 @@ class AlarmReceiver : BroadcastReceiver() {
             ACTION_PHASE_BOUNDARY -> {
                 val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
                 val wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LearningHelper:PhaseBoundaryWakeLock")
-                wakeLock?.acquire(15_000L)
+                wakeLock?.acquire(10_000L)
                 try {
-                    FocusService.evaluateCurrentPhase(context)
+                    val activeSession = FocusRepository.activeSession()
+                    if (activeSession != null) {
+                        FocusService.evaluateCurrentPhase(context)
+                    } else {
+                        val completed = FocusRepository.clearExpiredSession()
+                        if (completed != null) {
+                            FocusNotifications.showComplete(context, completed)
+                        }
+                        FocusService.stop(context)
+                    }
+                    AlarmScheduler.scheduleNext(context)
+                } catch (e: Exception) {
+                    Log.w("AlarmReceiver", "Could not evaluate phase boundary", e)
                 } finally {
-                    runCatching { if (wakeLock?.isHeld == true) wakeLock.release() }
+                    try {
+                        if (wakeLock?.isHeld == true) wakeLock.release()
+                    } catch (e: Exception) {
+                        Log.w("AlarmReceiver", "Error releasing wakelock", e)
+                    }
                 }
-                AlarmScheduler.scheduleNext(context)
             }
             ACTION_PRE_5M -> {
                 if (FocusRepository.isFocusActive()) {
@@ -161,6 +241,7 @@ class AlarmReceiver : BroadcastReceiver() {
                     }
                 }
 
+                ForegroundAppMonitor.start(context)
                 AlarmScheduler.scheduleNext(context)
             }
             ACTION_PRE_2M -> {
@@ -172,30 +253,91 @@ class AlarmReceiver : BroadcastReceiver() {
                 FocusRepository.recordMilestoneFired("$occurrenceId:PRE_2M")
                 AlarmPlayer.play(context, FocusRepository.alarmSoundUri.value)
 
-                val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-                val inCall = audioManager?.mode == AudioManager.MODE_IN_CALL || audioManager?.mode == AudioManager.MODE_IN_COMMUNICATION
+                val inCall = FocusNotificationListenerService.isCallActive(context)
                 if (!inCall) {
                     val preIntent = PreSessionActivity.createIntent(
                         context, occurrenceId, title, startMillis, durationMin, workMin, breakMin, hasLongBreak = hasLongBreak
                     ).apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                     }
-                    context.startActivity(preIntent)
+                    val pendingPre = PendingIntent.getActivity(
+                        context,
+                        101,
+                        preIntent,
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                    )
+                    // Full-screen intent notification compliant with Android 14 BAL over Keyguard
+                    if (FocusNotifications.canPost(context)) {
+                        val notif = NotificationCompat.Builder(context, FocusNotifications.CHANNEL_ALARMS)
+                            .setSmallIcon(R.drawable.ic_stat_focus)
+                            .setContentTitle("Focus Session Starting in 2 Minutes")
+                            .setContentText("$title begins at scheduled time.")
+                            .setPriority(NotificationCompat.PRIORITY_MAX)
+                            .setCategory(NotificationCompat.CATEGORY_ALARM)
+                            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                            .setFullScreenIntent(pendingPre, true)
+                            .setAutoCancel(true)
+                            .setContentIntent(pendingPre)
+                            .build()
+                        runCatching {
+                            context.getSystemService(NotificationManager::class.java).notify(FocusNotifications.ID_PRE_SESSION, notif)
+                        }
+                    }
+                    try {
+                        context.startActivity(preIntent)
+                    } catch (e: Exception) {
+                        Log.w("AlarmReceiver", "Direct startActivity deferred to full-screen intent", e)
+                    }
+                } else {
+                    // Call in progress or ringing: update the pre-session notification in notification tray
+                    if (FocusNotifications.canPost(context)) {
+                        val pendingPre = PendingIntent.getActivity(
+                            context,
+                            101,
+                            PreSessionActivity.createIntent(context, occurrenceId, title, startMillis, durationMin, workMin, breakMin, hasLongBreak = hasLongBreak),
+                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                        )
+                        val notif = NotificationCompat.Builder(context, FocusNotifications.CHANNEL_ALARMS)
+                            .setSmallIcon(R.drawable.ic_stat_focus)
+                            .setContentTitle("Focus session starts in 2 minutes")
+                            .setContentText("Focus lock begins at scheduled time. Tap to open preparation screen.")
+                            .setPriority(NotificationCompat.PRIORITY_HIGH)
+                            .setAutoCancel(true)
+                            .setContentIntent(pendingPre)
+                            .build()
+                        runCatching {
+                            context.getSystemService(NotificationManager::class.java).notify(FocusNotifications.ID_PRE_SESSION, notif)
+                        }
+                    }
                 }
+                ForegroundAppMonitor.start(context)
                 AlarmScheduler.scheduleNext(context)
             }
             ACTION_START -> {
-                AlarmPlayer.stop()
-                val nm = context.getSystemService(NotificationManager::class.java)
-                nm.cancel(FocusNotifications.ID_PRE_SESSION)
+                val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+                val wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LearningHelper:SessionStartWakeLock")
+                wakeLock?.acquire(10_000L)
+                try {
+                    AlarmPlayer.stop()
+                    val nm = context.getSystemService(NotificationManager::class.java)
+                    nm.cancel(FocusNotifications.ID_PRE_SESSION)
 
-                FocusRepository.recordMilestoneFired("$occurrenceId:START")
-                if (occurrenceId !in FocusRepository.skippedOccurrences.value) {
-                    FocusRepository.startSession(durationMin, workMin, breakMin, hasLongBreak = hasLongBreak)
-                    FocusService.start(context)
-                    ForegroundAppMonitor.enforceCurrentWindows(context)
+                    FocusRepository.recordMilestoneFired("$occurrenceId:START")
+                    if (occurrenceId !in FocusRepository.skippedOccurrences.value) {
+                        FocusRepository.startSession(durationMin, workMin, breakMin, hasLongBreak = hasLongBreak)
+                        FocusService.start(context)
+                        ForegroundAppMonitor.enforceCurrentWindows(context)
+                    }
+                    AlarmScheduler.scheduleNext(context)
+                } finally {
+                    try {
+                        if (wakeLock?.isHeld == true) {
+                            wakeLock.release()
+                        }
+                    } catch (e: Exception) {
+                        Log.w("AlarmReceiver", "Error releasing wakelock", e)
+                    }
                 }
-                AlarmScheduler.scheduleNext(context)
             }
         }
     }

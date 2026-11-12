@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
@@ -218,12 +219,26 @@ fun AllowlistScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                                 Text(app.label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
                                 Text("Default unblocked • 0 quota used", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
                             }
-                            OutlinedButton(
-                                onClick = { FocusRepository.setAllowed(app.packageName, false) },
-                                enabled = !isLocked,
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                            ) {
-                                Text("Disable")
+                            if (app.packageName == "com.android.settings") {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    shape = RoundedCornerShape(8.dp),
+                                ) {
+                                    Text(
+                                        "System Core",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    )
+                                }
+                            } else {
+                                OutlinedButton(
+                                    onClick = { FocusRepository.setAllowed(app.packageName, false) },
+                                    enabled = !isLocked,
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                                ) {
+                                    Text("Disable")
+                                }
                             }
                         }
                     }

@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
@@ -41,6 +42,7 @@ class FocusService : Service() {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
                     isScreenOn = false
+                    handler.removeCallbacks(checkRunnable)
                     chronometer?.stop()
                     ForegroundAppMonitor.onScreenOff()
                 }
@@ -57,6 +59,8 @@ class FocusService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        isScreenOn = pm?.isInteractive ?: true
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_SCREEN_ON)
@@ -68,13 +72,31 @@ class FocusService : Service() {
         FocusRepository.init(this)
         val session = FocusRepository.activeSession()
         if (session == null) {
-            FocusRepository.clearExpiredSession()
+            val completed = FocusRepository.clearExpiredSession()
+            if (completed != null) {
+                FocusNotifications.showComplete(this, completed)
+            }
             removeBreakOverlay()
+            ForegroundAppMonitor.stop()
+            // Satisfy Android 12+ startForegroundService contract before stopping
+            val dummyNotif = androidx.core.app.NotificationCompat.Builder(this, FocusNotifications.CHANNEL_ALARMS)
+                .setSmallIcon(com.example.learninghelper.R.drawable.ic_stat_focus)
+                .setContentTitle("Focus Session Complete")
+                .setPriority(androidx.core.app.NotificationCompat.PRIORITY_LOW)
+                .build()
+            val dummyType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            } else 0
+            try {
+                ServiceCompat.startForeground(this, FocusNotifications.ID_ONGOING, dummyNotif, dummyType)
+            } catch (ignored: Exception) {}
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
         }
 
         FocusNotifications.ensureChannels(this)
+        FocusNotificationListenerService.ensureRebound(this)
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
         } else {
@@ -143,7 +165,8 @@ class FocusService : Service() {
 
     private fun scheduleCheck(delayMs: Long) {
         handler.removeCallbacks(checkRunnable)
-        handler.postDelayed(checkRunnable, delayMs.coerceIn(1_000L, 60_000L))
+        if (!isScreenOn) return
+        handler.postDelayed(checkRunnable, delayMs.coerceAtLeast(50L))
     }
 
     private fun checkSession() {
@@ -299,8 +322,9 @@ class FocusService : Service() {
     }
 
     override fun onDestroy() {
-        unregisterReceiver(screenReceiver)
+        runCatching { unregisterReceiver(screenReceiver) }
         handler.removeCallbacks(checkRunnable)
+        AlarmScheduler.cancelPhaseAlarm(this)
         AlarmPlayer.stop()
         removeBreakOverlay()
         ForegroundAppMonitor.stop()
@@ -353,6 +377,7 @@ class FocusService : Service() {
 
         fun stop(context: Context) {
             try {
+                AlarmScheduler.cancelPhaseAlarm(context)
                 context.stopService(Intent(context, FocusService::class.java))
             } catch (e: Exception) {
                 Log.w(TAG, "Could not stop FocusService", e)

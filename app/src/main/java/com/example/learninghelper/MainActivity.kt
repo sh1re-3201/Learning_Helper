@@ -12,6 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import com.example.learninghelper.data.FocusRepository
 import com.example.learninghelper.focus.AlarmScheduler
+import com.example.learninghelper.focus.FocusNotificationListenerService
 import com.example.learninghelper.focus.FocusService
 import com.example.learninghelper.ui.*
 import com.example.learninghelper.ui.theme.LearningHelperTheme
@@ -61,6 +62,8 @@ class MainActivity : ComponentActivity() {
                         SCREEN_EMERGENCY_EXIT -> EmergencyExitScreen(
                             onExitSuccess = {
                                 FocusService.stop(this@MainActivity)
+                                com.example.learninghelper.focus.AlarmScheduler.cancelPhaseAlarm(this@MainActivity)
+                                com.example.learninghelper.focus.AlarmScheduler.scheduleNext(this@MainActivity)
                                 currentScreen = SCREEN_HOME
                             },
                             onCancel = { currentScreen = SCREEN_HOME },
@@ -110,6 +113,11 @@ class MainActivity : ComponentActivity() {
             FocusRepository.clearExpiredSession()
         }
         AlarmScheduler.scheduleNext(this)
+    }
+
+    override fun onDestroy() {
+        FocusNotificationListenerService.resetInterruptionFilterFailsafe(this)
+        super.onDestroy()
     }
 
     companion object {
