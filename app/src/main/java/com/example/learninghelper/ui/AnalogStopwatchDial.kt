@@ -30,12 +30,20 @@ import kotlin.math.sin
 
 /**
  * A bespoke monochrome Bauhaus/chronograph-style analog stopwatch dial for the active focus session.
+ * Features 3 hands:
+ * - Second hand (longest, slender with counterweight tail): completes 360° every 60 seconds.
+ * - Minute hand (intermediate length, medium thickness): completes 360° every 60 minutes.
+ * - Hour hand (shortest, boldest): completes 360° every 12 hours.
  *
  * @param progress Fraction of the session/phase that has elapsed, in 0f..1f (0f = just started, 1f = finished).
  * @param timeFormatted Formatted countdown text (e.g. "24:50").
  * @param phaseLabel Phase badge text (e.g. "FOCUS" or "BREAK").
  * @param isBreak Whether the active session is currently in a break phase.
+ * @param modifier Modifier for the outer Box.
  * @param dialSize Outer dimension of the dial (default 220dp).
+ * @param hours Elapsed session hours (0..11).
+ * @param minutes Elapsed session minutes (0..59).
+ * @param seconds Elapsed session seconds (0..59).
  */
 @Composable
 fun AnalogStopwatchDial(
@@ -45,6 +53,9 @@ fun AnalogStopwatchDial(
     isBreak: Boolean,
     modifier: Modifier = Modifier,
     dialSize: Dp = 220.dp,
+    hours: Int = 0,
+    minutes: Int = 0,
+    seconds: Int = 0,
 ) {
     val clampedProgress = progress.coerceIn(0f, 1f)
     val accentColor = if (isBreak) MonoSuccess else MonoPrimary
@@ -119,61 +130,97 @@ fun AnalogStopwatchDial(
                 )
             }
 
-            // 4. Chronograph Stopwatch Needle
-            val needleAngleRad = Math.toRadians((clampedProgress * 360.0) - 90.0)
-            val nCos = cos(needleAngleRad).toFloat()
-            val nSin = sin(needleAngleRad).toFloat()
+            // 4. Three Analog Timer Watch Hands (Order: Hour -> Minute -> Second)
 
-            // Slender needle pointing to current progress
-            val needleLength = trackRadius - 4.dp.toPx()
-            val needleEnd = Offset(cx + needleLength * nCos, cy + needleLength * nSin)
+            // [A] Shortest, boldest Hour Hand (1 revolution per 12 hours)
+            val safeHours = hours % 12
+            val safeMinutes = minutes % 60
+            val safeSeconds = seconds % 60
 
-            // Counterweight tail extending opposite direction
-            val tailLength = 12.dp.toPx()
-            val tailEnd = Offset(cx - tailLength * nCos, cy - tailLength * nSin)
+            val hrDegrees = (safeHours + safeMinutes / 60.0 + safeSeconds / 3600.0) * 30.0
+            val hrAngleRad = Math.toRadians(hrDegrees - 90.0)
+            val hrCos = cos(hrAngleRad).toFloat()
+            val hrSin = sin(hrAngleRad).toFloat()
+            val hrLength = radius * 0.48f
+
+            drawLine(
+                color = MonoOnSurface,
+                start = Offset(cx, cy),
+                end = Offset(cx + hrLength * hrCos, cy + hrLength * hrSin),
+                strokeWidth = 4.dp.toPx(),
+                cap = StrokeCap.Round,
+            )
+
+            // [B] Intermediate Minute Hand (1 revolution per 60 minutes)
+            val minDegrees = (safeMinutes + safeSeconds / 60.0) * 6.0
+            val minAngleRad = Math.toRadians(minDegrees - 90.0)
+            val minCos = cos(minAngleRad).toFloat()
+            val minSin = sin(minAngleRad).toFloat()
+            val minLength = radius * 0.72f
+
+            drawLine(
+                color = MonoOnSurface,
+                start = Offset(cx, cy),
+                end = Offset(cx + minLength * minCos, cy + minLength * minSin),
+                strokeWidth = 2.5.dp.toPx(),
+                cap = StrokeCap.Round,
+            )
+
+            // [C] Longest Second Hand with Counterweight Tail (1 revolution per 60 seconds)
+            val secDegrees = safeSeconds * 6.0
+            val secAngleRad = Math.toRadians(secDegrees - 90.0)
+            val secCos = cos(secAngleRad).toFloat()
+            val secSin = sin(secAngleRad).toFloat()
+            val secLength = radius * 0.88f
+            val tailLength = 14.dp.toPx()
+
+            val secEnd = Offset(cx + secLength * secCos, cy + secLength * secSin)
+            val secTail = Offset(cx - tailLength * secCos, cy - tailLength * secSin)
 
             drawLine(
                 color = accentColor,
-                start = tailEnd,
-                end = needleEnd,
-                strokeWidth = 2.dp.toPx(),
+                start = secTail,
+                end = secEnd,
+                strokeWidth = 1.5.dp.toPx(),
                 cap = StrokeCap.Round,
             )
 
             // 5. Center Pivot Hub
             drawCircle(
                 color = accentColor,
-                radius = 4.dp.toPx(),
+                radius = 5.dp.toPx(),
                 center = Offset(cx, cy),
             )
             drawCircle(
                 color = MonoBlack,
-                radius = 1.5.dp.toPx(),
+                radius = 2.dp.toPx(),
                 center = Offset(cx, cy),
             )
         }
 
-        // 6. Centered Digital Readout with Subtle Plate Protection
+        // 6. Sub-dial Digital Readout & Phase Badge (Positioned at 6 o'clock sub-dial)
         Column(
             modifier = Modifier
+                .align(Alignment.Center)
+                .offset(y = dialSize * 0.22f)
                 .background(
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.90f),
                     shape = CircleShape,
                 )
-                .padding(horizontal = 14.dp, vertical = 6.dp),
+                .padding(horizontal = 12.dp, vertical = 4.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
             Text(
                 text = timeFormatted,
-                fontSize = 34.sp,
-                fontWeight = FontWeight.Light,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onSurface,
                 letterSpacing = 1.sp,
             )
             Text(
                 text = phaseLabel,
-                fontSize = 11.sp,
+                fontSize = 9.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 2.sp,
                 color = if (isBreak) MonoSuccess else MonoOnSurfaceVariant,

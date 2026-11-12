@@ -276,12 +276,21 @@ private fun ActiveSessionCard(
                 fontWeight = FontWeight.SemiBold,
             )
 
+            val elapsedMillis = (effNow - session.startAt).coerceAtLeast(0L)
+            val totalSec = elapsedMillis / 1000L
+            val sec = (totalSec % 60L).toInt()
+            val min = ((totalSec / 60L) % 60L).toInt()
+            val hr = ((totalSec / 3600L) % 12L).toInt()
+
             AnalogStopwatchDial(
                 progress = session.progress(effNow),
                 timeFormatted = FocusPolicy.formatDuration(session.remainingMillis(effNow)),
                 phaseLabel = if (isBreak) "BREAK" else "FOCUS",
                 isBreak = isBreak,
                 dialSize = 210.dp,
+                hours = hr,
+                minutes = min,
+                seconds = sec,
             )
 
             Text(

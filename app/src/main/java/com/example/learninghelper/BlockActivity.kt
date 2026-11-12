@@ -205,12 +205,21 @@ private fun BlockScreen(
         )
         Spacer(Modifier.height(24.dp))
         if (active != null) {
+            val elapsedMillis = (effNow - active.startAt).coerceAtLeast(0L)
+            val totalSec = elapsedMillis / 1000L
+            val sec = (totalSec % 60L).toInt()
+            val min = ((totalSec / 60L) % 60L).toInt()
+            val hr = ((totalSec / 3600L) % 12L).toInt()
+
             AnalogStopwatchDial(
                 progress = active.progress(effNow),
                 timeFormatted = FocusPolicy.formatDuration(active.remainingMillis(effNow)),
                 phaseLabel = if (isBreakPhase) "BREAK" else "FOCUS",
                 isBreak = isBreakPhase,
                 dialSize = 210.dp,
+                hours = hr,
+                minutes = min,
+                seconds = sec,
             )
             Spacer(Modifier.height(12.dp))
             Text(
