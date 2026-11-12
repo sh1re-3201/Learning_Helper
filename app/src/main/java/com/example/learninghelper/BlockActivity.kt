@@ -13,14 +13,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -33,6 +31,8 @@ import com.example.learninghelper.focus.AppCatalog
 import com.example.learninghelper.focus.FocusPolicy
 import com.example.learninghelper.focus.ScheduleCalculator
 import com.example.learninghelper.focus.SessionPhase
+import com.example.learninghelper.ui.AnalogStopwatchDial
+import com.example.learninghelper.ui.theme.LearningHelperTheme
 import kotlinx.coroutines.delay
 
 class BlockActivity : ComponentActivity() {
@@ -56,32 +56,34 @@ class BlockActivity : ComponentActivity() {
         val blockedPackage = intent.getStringExtra(EXTRA_PACKAGE) ?: ""
         val blockedLabel = if (blockedPackage.isNotEmpty()) AppCatalog.labelFor(this, blockedPackage) else "This app"
         setContent {
-            BlockScreen(
-                blockedPackage = blockedPackage,
-                blockedLabel = blockedLabel,
-                onBackToStudy = {
-                    startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                    finish()
-                },
-                onGoHome = { goHome() },
-                onOpenDeskClock = {
-                    val clockIntent = Intent(this, MainActivity::class.java).apply {
-                        putExtra(MainActivity.EXTRA_SCREEN, MainActivity.SCREEN_DESK_CLOCK)
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                    }
-                    startActivity(clockIntent)
-                    finish()
-                },
-                onOpenEmergencyExit = {
-                    val exitIntent = Intent(this, MainActivity::class.java).apply {
-                        putExtra(MainActivity.EXTRA_SCREEN, MainActivity.SCREEN_EMERGENCY_EXIT)
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                    }
-                    startActivity(exitIntent)
-                    finish()
-                },
-                onSessionOver = { finish() },
-            )
+            LearningHelperTheme {
+                BlockScreen(
+                    blockedPackage = blockedPackage,
+                    blockedLabel = blockedLabel,
+                    onBackToStudy = {
+                        startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        finish()
+                    },
+                    onGoHome = { goHome() },
+                    onOpenDeskClock = {
+                        val clockIntent = Intent(this, MainActivity::class.java).apply {
+                            putExtra(MainActivity.EXTRA_SCREEN, MainActivity.SCREEN_DESK_CLOCK)
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                        }
+                        startActivity(clockIntent)
+                        finish()
+                    },
+                    onOpenEmergencyExit = {
+                        val exitIntent = Intent(this, MainActivity::class.java).apply {
+                            putExtra(MainActivity.EXTRA_SCREEN, MainActivity.SCREEN_EMERGENCY_EXIT)
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                        }
+                        startActivity(exitIntent)
+                        finish()
+                    },
+                    onSessionOver = { finish() },
+                )
+            }
         }
     }
 
@@ -106,7 +108,6 @@ class BlockActivity : ComponentActivity() {
                 )
     }
 }
-
 private val motivationalLines = listOf(
     "Your thesis won't write itself. Future you is counting on this hour.",
     "One focused session beats a whole day of half-work.",
@@ -178,7 +179,7 @@ private fun BlockScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Color(0xFF0F172A), Color(0xFF1E1B4B))))
+            .background(MaterialTheme.colorScheme.background)
             .verticalScroll(scrollState)
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -186,7 +187,7 @@ private fun BlockScreen(
     ) {
         Text(
             "$blockedLabel is locked",
-            color = Color.White,
+            color = MaterialTheme.colorScheme.onSurface,
             fontSize = 24.sp,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
@@ -198,35 +199,29 @@ private fun BlockScreen(
                 active != null -> "You're in focus mode."
                 else -> "Pre-session lock window active."
             },
-            color = Color(0xFFCBD5E1),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontSize = 15.sp,
             textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(24.dp))
         if (active != null) {
-            CircularProgressIndicator(
-                progress = { 1f - active.progress(effNow) },
-                modifier = Modifier.size(130.dp),
-                color = if (isBreakPhase) Color(0xFF10B981) else Color(0xFF818CF8),
-                trackColor = Color(0xFF334155),
-                strokeWidth = 8.dp,
+            AnalogStopwatchDial(
+                progress = active.progress(effNow),
+                timeFormatted = FocusPolicy.formatDuration(active.remainingMillis(effNow)),
+                phaseLabel = if (isBreakPhase) "BREAK" else "FOCUS",
+                isBreak = isBreakPhase,
+                dialSize = 210.dp,
             )
             Spacer(Modifier.height(12.dp))
             Text(
-                FocusPolicy.formatDuration(active.remainingMillis(effNow)),
-                color = Color.White,
-                fontSize = 36.sp,
-                fontWeight = FontWeight.Light,
-            )
-            Text(
                 if (isBreakPhase) "remaining in break session" else "remaining in session",
-                color = Color(0xFF94A3B8),
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         } else if (inPreSession) {
             Text(
                 "Focus begins in < 5 minutes.\nDevice Care & App Stores are locked.",
-                color = Color(0xFFF59E0B),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 15.sp,
                 textAlign = TextAlign.Center,
             )
@@ -234,7 +229,7 @@ private fun BlockScreen(
         Spacer(Modifier.height(24.dp))
         Text(
             line,
-            color = Color(0xFFE2E8F0),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontSize = 14.sp,
             textAlign = TextAlign.Center,
         )
@@ -242,7 +237,6 @@ private fun BlockScreen(
         Button(
             onClick = onBackToStudy,
             modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6366F1)),
         ) {
             Text("Back to studying", modifier = Modifier.padding(vertical = 2.dp), fontSize = 15.sp)
         }
@@ -250,7 +244,6 @@ private fun BlockScreen(
         OutlinedButton(
             onClick = onGoHome,
             modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFCBD5E1)),
         ) {
             Text("Go to Home Screen")
         }
@@ -259,7 +252,6 @@ private fun BlockScreen(
             OutlinedButton(
                 onClick = onOpenDeskClock,
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF38BDF8)),
             ) {
                 Text("Desk Clock (AOD)")
             }
@@ -267,7 +259,7 @@ private fun BlockScreen(
             OutlinedButton(
                 onClick = onOpenEmergencyExit,
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFEF4444)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
             ) {
                 Text("Emergency Exit (100-word essay)")
             }
